@@ -11,8 +11,9 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use axum::Router;
 use bayan_server::config::Config;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
@@ -195,4 +196,70 @@ fn parse(bytes: &[u8]) -> Result<Response, String> {
         headers,
         body: bytes[split + 4..].to_vec(),
     })
+}
+
+/// Serves `routes`, wrapped in the production middleware, with the production connection loop and no database. Send on the returned channel to begin shutdown; the task ends when `serve` returns.
+pub async fn serve_routes(
+    routes: Router,
+    config: &Config,
+) -> (SocketAddr, oneshot::Sender<()>, JoinHandle<()>) {
+    let app = bayan_server::http::with_middleware(routes, config);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind an ephemeral port");
+    let addr = listener.local_addr().expect("local address");
+    let (stop, stopped) = oneshot::channel::<()>();
+    let task = tokio::spawn(bayan_server::http::serve(
+        listener,
+        app,
+        config.header_read_timeout,
+        config.shutdown_grace,
+        async move {
+            let _ = stopped.await;
+        },
+    ));
+    (addr, stop, task)
+}
+
+/// Reads from `stream` until the server closes it (end of stream or reset), ignoring anything it sends first. Returns how long that took, or `None` if it is still open after `limit`.
+pub async fn closed_within(stream: &mut TcpStream, limit: Duration) -> Option<Duration> {
+    let started = Instant::now();
+    let mut buffer = [0_u8; 1024];
+    let closed = async {
+        loop {
+            match stream.read(&mut buffer).await {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+        }
+    };
+    tokio::time::timeout(limit, closed)
+        .await
+        .ok()
+        .map(|()| started.elapsed())
+}
+
+/// Reads one response with a body of `body_len` bytes from a kept-alive connection, without waiting for the connection to close.
+pub async fn read_one_response(stream: &mut TcpStream, body_len: usize) -> Response {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    let read = async {
+        loop {
+            if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n")
+                && bytes.len() >= end + 4 + body_len
+            {
+                return;
+            }
+            let n = stream.read(&mut buffer).await.expect("read a response");
+            assert!(
+                n > 0,
+                "the connection closed before the response was complete"
+            );
+            bytes.extend_from_slice(&buffer[..n]);
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), read)
+        .await
+        .expect("a response within 10 seconds");
+    parse(&bytes).expect("a valid HTTP response")
 }

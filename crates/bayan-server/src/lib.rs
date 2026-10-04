@@ -12,6 +12,7 @@ pub mod logging;
 pub mod version;
 
 use std::future::Future;
+use std::time::Duration;
 
 use tokio::net::TcpListener;
 
@@ -24,18 +25,18 @@ pub enum RunError {
     /// The database could not be opened or migrated.
     #[error(transparent)]
     Database(#[from] DatabaseError),
-    /// The HTTP server failed.
-    #[error("HTTP server error: {0}")]
-    Serve(std::io::ErrorKind),
 }
+
+/// How long closing the database may take after the HTTP server has stopped. Requests still running after the shutdown grace period may hold connections; the process does not wait for them beyond this.
+pub const DATABASE_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Opens the database, then serves HTTP on `listener` until `shutdown` completes.
 ///
-/// After `shutdown` completes the server stops accepting connections and gives requests in progress up to [`Config::shutdown_grace`] to finish, then closes the database.
+/// After `shutdown` completes the server stops accepting connections and gives requests in progress up to [`Config::shutdown_grace`] to finish, then closes the database (waiting at most [`DATABASE_CLOSE_TIMEOUT`]). Connections that do not send a complete request head within [`Config::header_read_timeout`] are closed.
 ///
 /// # Errors
 ///
-/// Returns an error if the database cannot be opened or the HTTP server fails.
+/// Returns an error if the database cannot be opened or migrated.
 pub async fn run(
     config: &Config,
     listener: TcpListener,
@@ -49,28 +50,22 @@ pub async fn run(
             database: database.clone(),
         },
     );
-
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
-        let _ = stop_rx.await;
-    });
-    let mut server = std::pin::pin!(server.into_future());
-    let result = tokio::select! {
-        result = &mut server => result,
-        () = shutdown => {
-            tracing::info!(grace_secs = config.shutdown_grace.as_secs(), "shutting down");
-            let _ = stop_tx.send(());
-            if let Ok(result) = tokio::time::timeout(config.shutdown_grace, &mut server).await {
-                result
-            } else {
-                tracing::warn!("requests still running after the shutdown grace period; stopping anyway");
-                Ok(())
-            }
-        }
-    };
-    database.close().await;
+    http::serve(
+        listener,
+        app,
+        config.header_read_timeout,
+        config.shutdown_grace,
+        shutdown,
+    )
+    .await;
+    if tokio::time::timeout(DATABASE_CLOSE_TIMEOUT, database.close())
+        .await
+        .is_err()
+    {
+        tracing::warn!("database connections still in use; stopping without waiting for them");
+    }
     tracing::info!("stopped");
-    result.map_err(|error| RunError::Serve(error.kind()))
+    Ok(())
 }
 
 /// Completes when the process receives `SIGTERM` (sent by container runtimes) or `SIGINT` (Ctrl+C).

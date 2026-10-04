@@ -1,9 +1,10 @@
 //! The HTTP application: routes, middleware and static files.
 //!
-//! Every request passes through, from the outside in: request-ID assignment, content-free request logging, the security headers of ADR-0014, a request timeout, and a request body size limit.
+//! Every request passes through, from the outside in: request-ID assignment, content-free request logging, the security headers of ADR-0014, a request timeout, and a request body size limit. [`serve`] runs the connections themselves, with a header-read timeout and graceful shutdown.
 
 mod headers;
 mod request_id;
+mod serve;
 
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use tower_http::timeout::TimeoutLayer;
 
 pub use headers::{CONTENT_SECURITY_POLICY, SECURITY_HEADERS};
 pub use request_id::{REQUEST_ID_HEADER, RequestId};
+pub use serve::serve;
 
 use crate::config::Config;
 use crate::db::Database;

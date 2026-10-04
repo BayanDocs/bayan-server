@@ -2,7 +2,7 @@
 //!
 //! Settings come from, in increasing order of precedence: built-in defaults, an optional TOML file named by `BAYAN_CONFIG_FILE`, and `BAYAN_*` environment variables. Secrets can be read from files with the `*_FILE` convention (`BAYAN_DATABASE_URL_FILE`, or `database_url_file` in the TOML file) so they never appear in the process environment. Every setting is documented in `docs/configuration.md`.
 //!
-//! Validation is strict: unknown `BAYAN_*` variables and unknown TOML keys are errors, so a typo cannot silently fall back to a default. Error messages name the setting but never include a secret's value.
+//! Validation is strict: unknown `BAYAN_*` variables and unknown TOML keys are errors, so a typo cannot silently fall back to a default. Error messages name the setting (and, for the TOML file, the line and key) but never repeat a configured value, a file's path or a file's contents: any of them may be a secret put in the wrong place.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -21,59 +21,76 @@ const MAX_FILE_BYTES: u64 = 64 * 1024;
 /// File name of the SQLite database inside the data directory.
 pub const SQLITE_FILE_NAME: &str = "bayan.sqlite3";
 
-/// One setting: its environment variable, its TOML key, and how to parse it.
+/// One setting: its environment variable, its TOML key, and what its TOML value must look like (used in error messages instead of the value itself).
 struct Setting {
     env: &'static str,
     key: &'static str,
+    expects: &'static str,
 }
 
 const LISTEN: Setting = Setting {
     env: "BAYAN_LISTEN",
     key: "listen",
+    expects: "a quoted IP address and port, such as \"0.0.0.0:8080\"",
 };
 const DATA_DIR: Setting = Setting {
     env: "BAYAN_DATA_DIR",
     key: "data_dir",
+    expects: "a quoted path",
 };
 const DATABASE_URL: Setting = Setting {
     env: "BAYAN_DATABASE_URL",
     key: "database_url",
+    expects: "a quoted postgres:// URL",
 };
 const DATABASE_URL_FILE: Setting = Setting {
     env: "BAYAN_DATABASE_URL_FILE",
     key: "database_url_file",
+    expects: "a quoted path",
 };
 const DATABASE_MAX_CONNECTIONS: Setting = Setting {
     env: "BAYAN_DATABASE_MAX_CONNECTIONS",
     key: "database_max_connections",
+    expects: "a whole number",
 };
 const WEB_DIR: Setting = Setting {
     env: "BAYAN_WEB_DIR",
     key: "web_dir",
+    expects: "a quoted path",
 };
 const LOG_FORMAT: Setting = Setting {
     env: "BAYAN_LOG_FORMAT",
     key: "log_format",
+    expects: "\"text\" or \"json\"",
 };
 const LOG_LEVEL: Setting = Setting {
     env: "BAYAN_LOG_LEVEL",
     key: "log_level",
+    expects: "\"error\", \"warn\", \"info\", \"debug\" or \"trace\"",
 };
 const MAX_REQUEST_BODY_BYTES: Setting = Setting {
     env: "BAYAN_MAX_REQUEST_BODY_BYTES",
     key: "max_request_body_bytes",
+    expects: "a whole number of bytes",
 };
 const REQUEST_TIMEOUT_SECS: Setting = Setting {
     env: "BAYAN_REQUEST_TIMEOUT_SECS",
     key: "request_timeout_secs",
+    expects: "a whole number of seconds",
+};
+const HEADER_READ_TIMEOUT_SECS: Setting = Setting {
+    env: "BAYAN_HEADER_READ_TIMEOUT_SECS",
+    key: "header_read_timeout_secs",
+    expects: "a whole number of seconds",
 };
 const SHUTDOWN_GRACE_SECS: Setting = Setting {
     env: "BAYAN_SHUTDOWN_GRACE_SECS",
     key: "shutdown_grace_secs",
+    expects: "a whole number of seconds",
 };
 
-/// Every setting, used to reject unknown `BAYAN_*` variables.
-const SETTINGS: [&Setting; 11] = [
+/// Every setting, used to reject unknown `BAYAN_*` variables and to name TOML keys in errors.
+const SETTINGS: [&Setting; 12] = [
     &LISTEN,
     &DATA_DIR,
     &DATABASE_URL,
@@ -84,6 +101,7 @@ const SETTINGS: [&Setting; 11] = [
     &LOG_LEVEL,
     &MAX_REQUEST_BODY_BYTES,
     &REQUEST_TIMEOUT_SECS,
+    &HEADER_READ_TIMEOUT_SECS,
     &SHUTDOWN_GRACE_SECS,
 ];
 
@@ -106,8 +124,10 @@ pub struct Config {
     pub log_level: LogLevel,
     /// Largest accepted request body, in bytes.
     pub max_request_body_bytes: usize,
-    /// Time after which an unfinished request is answered with `408 Request Timeout`.
+    /// Time after which a request whose head has arrived but which is not yet answered gets `408 Request Timeout`.
     pub request_timeout: Duration,
+    /// Time a connection gets to send a complete request head (request line and headers). It also limits how long a connection may sit idle, before its first request or between keep-alive requests. Connections that exceed it are closed.
+    pub header_read_timeout: Duration,
     /// Time in-flight requests get to finish after a shutdown signal.
     pub shutdown_grace: Duration,
 }
@@ -197,24 +217,32 @@ pub enum ConfigError {
     /// A setting was given both directly and as a file.
     #[error("{0} and {1} are both set; set only one")]
     Conflict(&'static str, &'static str),
-    /// A file named by the configuration cannot be read.
-    #[error("cannot read {setting} file {path}: {reason}")]
+    /// A file named by the configuration cannot be read. The path is not repeated: a secret may have been put where the path belongs.
+    #[error("cannot read the file named by {setting}: {reason}")]
     File {
         /// The setting that names the file.
         setting: String,
-        /// The path of the file.
-        path: PathBuf,
         /// Why it cannot be read.
         reason: String,
     },
-    /// The TOML configuration file is invalid.
-    #[error("invalid configuration file {path}: {reason}")]
+    /// The TOML configuration file is invalid. Only the line number and a known key are reported, never the file's text: the parser's own messages quote values, which may be secrets.
+    #[error("invalid configuration file (BAYAN_CONFIG_FILE){}: {problem}", toml_location(*.line, *.key))]
     Toml {
-        /// The path of the file.
-        path: PathBuf,
-        /// The parser's message.
-        reason: String,
+        /// The line of the problem, if the parser reported one.
+        line: Option<usize>,
+        /// The setting's TOML key on that line, if it is a known one.
+        key: Option<&'static str>,
+        /// What is wrong, built only from fixed text.
+        problem: String,
     },
+}
+
+fn toml_location(line: Option<usize>, key: Option<&str>) -> String {
+    match (line, key) {
+        (Some(line), Some(key)) => format!(" at line {line}, key `{key}`"),
+        (Some(line), None) => format!(" at line {line}"),
+        (None, _) => String::new(),
+    }
 }
 
 /// The optional TOML file. Every key is optional; unknown keys are rejected.
@@ -231,6 +259,7 @@ struct FileConfig {
     log_level: Option<String>,
     max_request_body_bytes: Option<u64>,
     request_timeout_secs: Option<u64>,
+    header_read_timeout_secs: Option<u64>,
     shutdown_grace_secs: Option<u64>,
 }
 
@@ -349,12 +378,25 @@ impl Config {
             1,
             3600,
         )?);
+        let header_read_timeout = number_setting(
+            &HEADER_READ_TIMEOUT_SECS,
+            env(&HEADER_READ_TIMEOUT_SECS),
+            file.header_read_timeout_secs,
+        )?
+        .unwrap_or(10);
+        let header_read_timeout = Duration::from_secs(in_range(
+            HEADER_READ_TIMEOUT_SECS.env,
+            header_read_timeout,
+            1,
+            300,
+        )?);
+        // Below Docker's default stop timeout (10 seconds), so `docker stop` ends with a clean exit; see docs/deployment.md.
         let shutdown_grace = number_setting(
             &SHUTDOWN_GRACE_SECS,
             env(&SHUTDOWN_GRACE_SECS),
             file.shutdown_grace_secs,
         )?
-        .unwrap_or(30);
+        .unwrap_or(5);
         let shutdown_grace =
             Duration::from_secs(in_range(SHUTDOWN_GRACE_SECS.env, shutdown_grace, 0, 3600)?);
 
@@ -368,6 +410,7 @@ impl Config {
             log_level,
             max_request_body_bytes,
             request_timeout,
+            header_read_timeout,
             shutdown_grace,
         })
     }
@@ -427,10 +470,44 @@ fn database_config(
 
 fn read_config_file(path: &Path) -> Result<FileConfig, ConfigError> {
     let text = read_limited(CONFIG_FILE_VAR, path)?;
-    toml::from_str(&text).map_err(|error| ConfigError::Toml {
-        path: path.to_owned(),
-        reason: error.message().to_owned(),
-    })
+    toml::from_str(&text).map_err(|error| toml_error(&text, &error))
+}
+
+/// Describes a TOML error by line number, known key and a fixed description. The parser's message is only classified, never shown, because it quotes the offending value.
+fn toml_error(text: &str, error: &toml::de::Error) -> ConfigError {
+    let line = error.span().map(|span| {
+        let start = span.start.min(text.len());
+        text.as_bytes()[..start]
+            .iter()
+            .filter(|&&byte| byte == b'\n')
+            .count()
+            + 1
+    });
+    let setting = line.and_then(|line| {
+        let key = text.lines().nth(line - 1)?.split_once('=')?.0.trim();
+        SETTINGS.iter().copied().find(|setting| setting.key == key)
+    });
+    let message = error.message();
+    let problem = if message.starts_with("unknown field") {
+        "unknown key (see docs/configuration.md for the supported settings)".to_owned()
+    } else if message.contains("duplicate") {
+        "the key is set more than once".to_owned()
+    } else if message.starts_with("invalid type")
+        || message.starts_with("invalid value")
+        || message.starts_with("invalid length")
+    {
+        match setting {
+            Some(setting) => format!("wrong kind of value; expected {}", setting.expects),
+            None => "wrong kind of value".to_owned(),
+        }
+    } else {
+        "not valid TOML; every line must be `key = value`, with text values in quotes".to_owned()
+    };
+    ConfigError::Toml {
+        line,
+        key: setting.map(|setting| setting.key),
+        problem,
+    }
 }
 
 /// Reads a secret from a file, dropping one trailing line ending (as left by editors and `echo`).
@@ -445,7 +522,6 @@ fn read_secret_file(setting: &str, path: &Path) -> Result<String, ConfigError> {
     if text.is_empty() {
         return Err(ConfigError::File {
             setting: setting.to_owned(),
-            path: path.to_owned(),
             reason: "the file is empty".to_owned(),
         });
     }
@@ -456,7 +532,6 @@ fn read_limited(setting: &str, path: &Path) -> Result<String, ConfigError> {
     use std::io::Read as _;
     let file_error = |reason: String| ConfigError::File {
         setting: setting.to_owned(),
-        path: path.to_owned(),
         reason,
     };
     let file = std::fs::File::open(path).map_err(|error| file_error(error.kind().to_string()))?;
@@ -559,6 +634,8 @@ mod tests {
         assert_eq!(config.log_level, LogLevel::Info);
         assert_eq!(config.max_request_body_bytes, 1024 * 1024);
         assert_eq!(config.request_timeout, Duration::from_secs(30));
+        assert_eq!(config.header_read_timeout, Duration::from_secs(10));
+        assert_eq!(config.shutdown_grace, Duration::from_secs(5));
         assert_eq!(config.web_dir, None);
     }
 
@@ -585,13 +662,98 @@ mod tests {
             Config::from_vars(&vars(&[("BAYAN_LISTN", "0.0.0.0:80")])),
             Err(ConfigError::UnknownVariable("BAYAN_LISTN".to_owned()))
         );
-        let file = temp_file("unknown.toml", "lisen = \"0.0.0.0:80\"\n");
-        let error = Config::from_vars(&vars(&[(
+        let error = file_error(
+            "unknown.toml",
+            "log_level = \"info\"\nlisen = \"0.0.0.0:80\"\n",
+        );
+        assert_eq!(
+            error.to_string(),
+            "invalid configuration file (BAYAN_CONFIG_FILE) at line 2: unknown key (see docs/configuration.md for the supported settings)"
+        );
+    }
+
+    /// The error for a configuration file with `contents`.
+    fn file_error(name: &str, contents: &str) -> ConfigError {
+        let file = temp_file(name, contents);
+        Config::from_vars(&vars(&[(
             "BAYAN_CONFIG_FILE",
             file.to_str().expect("utf-8 path"),
         )]))
-        .expect_err("unknown key must be rejected");
-        assert!(matches!(error, ConfigError::Toml { .. }), "{error:?}");
+        .expect_err("the configuration file is invalid")
+    }
+
+    #[test]
+    fn header_read_timeout_is_validated() {
+        let config = Config::from_vars(&vars(&[("BAYAN_HEADER_READ_TIMEOUT_SECS", "3")]))
+            .expect("valid configuration");
+        assert_eq!(config.header_read_timeout, Duration::from_secs(3));
+        let error = Config::from_vars(&vars(&[("BAYAN_HEADER_READ_TIMEOUT_SECS", "0")]))
+            .expect_err("0 is out of range");
+        assert_eq!(
+            error.to_string(),
+            "invalid value for BAYAN_HEADER_READ_TIMEOUT_SECS: must be between 1 and 300"
+        );
+    }
+
+    /// Regression test (SRV-001 review): a secret put where a file path or another value belongs must not reach the error message, which ends up in logs.
+    #[test]
+    fn misplaced_secrets_never_appear_in_errors() {
+        const SECRET: &str = "hunter2";
+        let url = "postgres://bayan:hunter2@db/bayan";
+        let mut errors = vec![
+            // The URL itself given as the secret file's path.
+            Config::from_vars(&vars(&[("BAYAN_DATABASE_URL_FILE", url)]))
+                .expect_err("no such file"),
+            Config::from_vars(&vars(&[("BAYAN_CONFIG_FILE", url)])).expect_err("no such file"),
+        ];
+        for (name, contents) in [
+            // A quoted URL under a numeric key: the parser's message would quote it.
+            (
+                "wrong-type.toml",
+                "database_max_connections = \"postgres://bayan:hunter2@db/x\"\n",
+            ),
+            // An unquoted URL: a TOML syntax error.
+            (
+                "unquoted.toml",
+                "database_url = postgres://bayan:hunter2@db/x\n",
+            ),
+            // A bare line, and a secret used as a key.
+            ("bare.toml", "postgres://bayan:hunter2@db/x\n"),
+            ("secret-key.toml", "hunter2 = \"x\"\n"),
+            // A path under the URL key, given as an array.
+            (
+                "array.toml",
+                "database_url_file = [\"/run/secrets/hunter2\"]\n",
+            ),
+            // The URL under a file key: read as a path that does not exist.
+            (
+                "url-as-path.toml",
+                "database_url_file = \"postgres://bayan:hunter2@db/x\"\n",
+            ),
+        ] {
+            errors.push(file_error(name, contents));
+        }
+        for error in &errors {
+            let message = error.to_string();
+            assert!(
+                !message.contains(SECRET),
+                "secret in error message: {message}"
+            );
+            assert!(
+                !format!("{error:?}").contains(SECRET),
+                "secret in debug output: {error:?}"
+            );
+        }
+        // The messages still say where to look.
+        assert_eq!(
+            errors[0].to_string(),
+            "cannot read the file named by BAYAN_DATABASE_URL_FILE: entity not found"
+        );
+        assert_eq!(
+            errors[2].to_string(),
+            "invalid configuration file (BAYAN_CONFIG_FILE) at line 1, key `database_max_connections`: wrong kind of value; expected a whole number"
+        );
+        assert!(errors[3].to_string().contains("at line 1"), "{}", errors[3]);
     }
 
     #[test]

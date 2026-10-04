@@ -15,7 +15,10 @@ publish = false
 [workspace.dependencies]
 bayan-db-postgres = { path = "crates/bayan-db-postgres" }
 bayan-db-sqlite = { path = "crates/bayan-db-sqlite" }
-axum = { version = "=0.8.9", default-features = false, features = ["http1", "matched-path", "tokio"] }
+axum = { version = "=0.8.9", default-features = false, features = ["matched-path"] }
+# hyper and hyper-util serve the connections directly (crates/bayan-server/src/http/serve.rs) so that every connection gets a timer and a header-read timeout, which `axum::serve` does not set up. Both were already in the build as dependencies of axum; HTTP/1 only.
+hyper = { version = "=1.11.1", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "=0.1.21", default-features = false, features = ["http1", "server", "server-graceful", "service", "tokio"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 # SQLite is bundled (compiled from C source by libsqlite3-sys). ADR-0006 §3 permits it because it only stores server-generated metadata through bound parameters; it never parses documents or client-supplied SQL. No TLS feature: every TLS backend sqlx offers needs C or assembly code (ring, aws-lc, OpenSSL), which needs a separate decision.

@@ -7,7 +7,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::routing::get;
 use bayan_server::config::{Config, DatabaseConfig, SQLITE_FILE_NAME};
-use bayan_server::http::{SECURITY_HEADERS, with_middleware};
+use bayan_server::http::SECURITY_HEADERS;
 use common::{Server, TempDir, config};
 
 fn assert_security_headers(response: &common::Response) {
@@ -154,19 +154,15 @@ async fn slow_requests_time_out() {
             "too late"
         }),
     );
-    let app = with_middleware(routes, &config);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
-    let addr = listener.local_addr().expect("local address");
-    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let (addr, stop, server) = common::serve_routes(routes, &config).await;
 
     let started = std::time::Instant::now();
     let response = common::get(addr, "/slow").await;
     assert_eq!(response.status, 408);
     assert!(started.elapsed() < Duration::from_secs(10));
     assert_security_headers(&response);
-    server.abort();
+    let _ = stop.send(());
+    server.await.expect("the server task does not panic");
 }
 
 #[tokio::test]
