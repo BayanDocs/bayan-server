@@ -101,17 +101,8 @@ jobs:
         run: scripts/dev-setup.sh grype
       - name: Build the image
         run: docker build --build-arg BAYAN_BUILD_COMMIT="$GITHUB_SHA" --tag bayan-server:ci .
-      - name: Smoke test (read-only root filesystem, non-root user, health check, clean shutdown)
+      - name: Smoke test (read-only root filesystem, non-root user, health check, clean shutdown; reports the image size)
         run: scripts/container-smoke-test.sh bayan-server:ci
-      - name: Report the image size
-        run: |
-          {
-            echo "### Container image"
-            echo
-            echo "| Image | Size |"
-            echo "|---|---|"
-            echo "| bayan-server:ci (${GITHUB_SHA}) | $(docker image ls bayan-server:ci --format '{{.Size}}') ($(docker image inspect --format '{{.Size}}' bayan-server:ci) bytes) |"
-          } >>"$GITHUB_STEP_SUMMARY"
       - name: Vulnerability scan of the image's operating-system packages (grype)
         run: grype bayan-server:ci --fail-on high
       - name: Vulnerability scan of the Rust crates compiled into the binary (grype)
