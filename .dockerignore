@@ -1,0 +1,8 @@
+# Only the files the build needs are sent to Docker.
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!.cargo/config.toml
+!crates/**
+!xtask/**
