@@ -2,8 +2,8 @@
 //!
 //! Every request gets a fresh ID that appears in its log line and in the `x-request-id` response header, so an operator can match a user's report to the log. IDs sent by clients are ignored and replaced: a client-chosen value would be untrusted text in our logs.
 
-use std::fmt::Write as _;
-use std::hash::{BuildHasher as _, Hasher as _};
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -19,30 +19,28 @@ pub const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id"
 #[derive(Debug, Clone)]
 pub struct RequestId(pub String);
 
-/// Generates IDs of the form `<process-prefix>-<counter>`: unique within a process, and distinct across restarts.
+/// Generates opaque request IDs: 32 hexadecimal digits, unique within a process, that reveal nothing about how many requests the server has handled (metadata minimization, threat T9).
+///
+/// Each ID is a keyed hash of a counter. The key is a standard-library `RandomState`, seeded from the operating system's random source, so it differs in every process and clients never learn it. The standard hasher (`SipHash`) keeps outputs for different inputs unrelated to anyone without the key, so consecutive IDs cannot be compared to count requests. Two 64-bit hashes make collisions practically impossible.
 #[derive(Debug)]
 pub(super) struct Generator {
-    prefix: String,
+    key: RandomState,
     counter: AtomicU64,
 }
 
 impl Generator {
     pub(super) fn new() -> Self {
-        // The standard library seeds `RandomState` from the operating system's random source, which gives a per-process random prefix without another dependency. It only needs to be distinct, not secret.
-        let random = std::collections::hash_map::RandomState::new()
-            .build_hasher()
-            .finish();
-        let mut prefix = String::with_capacity(16);
-        let _ = write!(prefix, "{random:016x}");
         Self {
-            prefix,
+            key: RandomState::new(),
             counter: AtomicU64::new(0),
         }
     }
 
-    fn next(&self) -> String {
+    pub(super) fn next(&self) -> String {
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
-        format!("{}-{n:x}", self.prefix)
+        let high = self.key.hash_one((n, 0_u8));
+        let low = self.key.hash_one((n, 1_u8));
+        format!("{high:016x}{low:016x}")
     }
 }
 
@@ -66,4 +64,56 @@ pub(super) async fn assign(
         response.headers_mut().insert(REQUEST_ID_HEADER, value);
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::Generator;
+
+    fn shared_prefix_len(a: &str, b: &str) -> usize {
+        a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
+    }
+
+    /// Regression test (SRV-001 review): IDs returned to clients must not reveal how many requests were handled in between. A counter shows up as a shared prefix or as consecutive IDs that differ in only a few digits; keyed hashes show neither.
+    #[test]
+    fn ids_are_opaque_and_unique() {
+        let generator = Generator::new();
+        let ids: Vec<String> = (0..1000).map(|_| generator.next()).collect();
+        for id in &ids {
+            assert!(
+                id.len() == 32
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "unexpected ID format: {id}"
+            );
+        }
+        assert_eq!(
+            ids.iter().collect::<BTreeSet<_>>().len(),
+            ids.len(),
+            "IDs are unique"
+        );
+        let shared = ids[1..]
+            .iter()
+            .map(|id| shared_prefix_len(&ids[0], id))
+            .min();
+        assert!(shared < Some(4), "IDs share a prefix of {shared:?} digits");
+        for pair in ids.windows(2) {
+            let same = pair[0]
+                .bytes()
+                .zip(pair[1].bytes())
+                .filter(|(a, b)| a == b)
+                .count();
+            assert!(
+                same < 16,
+                "consecutive IDs {} and {} look related",
+                pair[0],
+                pair[1]
+            );
+        }
+        // Another process has another key, so the same counter values give different IDs.
+        assert_ne!(Generator::new().next(), ids[0]);
+    }
 }
