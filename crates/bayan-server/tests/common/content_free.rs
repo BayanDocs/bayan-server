@@ -1,6 +1,6 @@
 //! The content-free logging check shared by `tests/logging_text.rs` and `tests/logging_json.rs` (SRV-001 AC-3, threat T20).
 //!
-//! Every log line the process writes, at the most verbose level and from every library, is captured while requests full of canary values reach the server: in bodies, `Authorization` and `Cookie` headers, query strings, paths, other headers, client-supplied request IDs and an unknown method. Not one canary may appear in the logs.
+//! Every log line the process writes, at the most verbose level and from every library, is captured while requests full of canary values reach the server: in bodies, `Authorization` and `Cookie` headers, query strings, paths, other headers, client-supplied request IDs and an unknown method. A dependency's log event that would quote a password file line is emitted too. Not one canary may appear in the logs.
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -80,6 +80,12 @@ pub async fn run(format: LogFormat) {
     for raw in &requests {
         let _ = super::request(server.addr, raw).await;
     }
+    // What sqlx's PostgreSQL driver logs for a malformed `.pgpass` line: the line itself, password included. The subscriber must drop it.
+    tracing::warn!(
+        target: "sqlx_postgres::options::pgpass",
+        line = "db.internal:5432:bayan:bayan:Canary-Pgpass-8",
+        "Malformed line in pgpass file: invalid escape"
+    );
     server.stop().await;
 
     let logs = String::from_utf8(capture.0.lock().expect("log buffer lock").clone())

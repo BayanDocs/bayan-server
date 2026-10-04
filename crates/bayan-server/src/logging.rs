@@ -1,11 +1,15 @@
 //! Structured logging with a content-free policy.
 //!
-//! The server logs operational facts only. It never logs request or response bodies, header values (in particular `Authorization` and `Cookie`), query strings, raw request paths, document content, document titles, file names or user identifiers (ADR-0015 §7, threat T20). Request logs name the matched route template (for example `/readyz`), never the path the client sent. `tests/logging.rs` proves this policy by capturing every log line at the most verbose level while sending requests full of canary values.
+//! The server logs operational facts only. It never logs request or response bodies, header values (in particular `Authorization` and `Cookie`), query strings, raw request paths, document content, document titles, file names or user identifiers (ADR-0015 §7, threat T20). Request logs name the matched route template (for example `/readyz`), never the path the client sent. `tests/logging_text.rs` and `tests/logging_json.rs` prove this policy by capturing every log line at the most verbose level while sending requests full of canary values.
+//!
+//! Log sources in dependencies that can write secrets are switched off entirely ([`SUPPRESSED_TARGETS`]).
 
 use std::io;
 
+use tracing::Metadata;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
 use crate::config::{LogFormat, LogLevel};
 
@@ -21,9 +25,23 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
+/// Log targets in dependencies that are never recorded, because they can contain secrets. sqlx's PostgreSQL driver reports a malformed line of a `.pgpass` password file by logging the whole line, password included.
+pub const SUPPRESSED_TARGETS: [&str; 1] = ["sqlx_postgres::options::pgpass"];
+
+/// Disables events and spans from [`SUPPRESSED_TARGETS`] for the whole subscriber, at every level.
+struct SuppressSecretSources;
+
+impl<S: tracing::Subscriber> Layer<S> for SuppressSecretSources {
+    fn enabled(&self, metadata: &Metadata<'_>, _context: Context<'_, S>) -> bool {
+        !SUPPRESSED_TARGETS
+            .iter()
+            .any(|target| metadata.target().starts_with(target))
+    }
+}
+
 /// Builds the log subscriber for `format` and `level`, writing to `writer`.
 ///
-/// Colors are disabled so log files never contain terminal escape codes.
+/// Colors are disabled so log files never contain terminal escape codes, and [`SUPPRESSED_TARGETS`] are never recorded.
 pub fn subscriber<W>(
     format: LogFormat,
     level: LogLevel,
@@ -38,13 +56,14 @@ where
         .with_ansi(false)
         .with_target(true);
     match format {
-        LogFormat::Text => Box::new(builder.finish()),
+        LogFormat::Text => Box::new(builder.finish().with(SuppressSecretSources)),
         LogFormat::Json => Box::new(
             builder
                 .json()
                 .flatten_event(true)
                 .with_current_span(false)
-                .finish(),
+                .finish()
+                .with(SuppressSecretSources),
         ),
     }
 }
