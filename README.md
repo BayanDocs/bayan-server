@@ -4,7 +4,37 @@ The collaboration backbone of [BayanDocs](https://github.com/BayanDocs/docs): ac
 
 It ships as a single Rust binary in a single container. By default it needs nothing else (an embedded database and local disk); larger deployments can use PostgreSQL and any S3-compatible object store. It also serves the [web app](https://github.com/BayanDocs/bayan-web), so `docker run` gives a complete, self-hosted BayanDocs.
 
-> **Status: Phase 0 (Foundations).** No code yet. The first work package is [SRV-001](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/SRV-001-server-scaffold.md).
+> **Status: Phase 0 (Foundations).** The server skeleton from work package [SRV-001](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/SRV-001-server-scaffold.md) is in place: configuration, content-free logging, the SQLite and PostgreSQL metadata database with migrations, health endpoints, static file serving with security headers, the container image and CI. Accounts, document storage, WebSockets and MLS come in later work packages.
+
+## Quick start
+
+Run the server in a hardened container, with its built-in SQLite database on a volume:
+
+```sh
+docker build -t bayan-server .
+docker run --detach --name bayan-server --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --volume bayan-data:/data --publish 127.0.0.1:8080:8080 bayan-server
+curl http://127.0.0.1:8080/readyz
+```
+
+Or with Docker Compose for development: `docker compose up --build` (add `--profile postgres` for a PostgreSQL setup on port 8081).
+
+- [docs/configuration.md](docs/configuration.md): every setting (environment variables, the TOML file, secrets from files), the database, logs and endpoints.
+- [docs/deployment.md](docs/deployment.md): building, running, upgrading and checking the container, including PostgreSQL.
+
+## Development
+
+You need the Rust toolchain pinned in `rust-toolchain.toml` (rustup installs it automatically) and the tools from `scripts/dev-setup.sh` (cargo-deny, grype).
+
+```sh
+cargo xtask verify                 # the full verification gate: format, lint, test, docs, cargo deny
+cargo run -p bayan-server          # run locally on 127.0.0.1:8080 with SQLite in ./data
+BAYAN_TEST_POSTGRES_URL=postgres://… cargo xtask test-postgres         # PostgreSQL integration test
+BAYAN_SQLX_POSTGRES_URL=postgres://… cargo xtask sqlx-prepare         # regenerate query metadata after changing queries or migrations
+scripts/container-smoke-test.sh bayan-server                          # check a built image
+```
+
+Builds never need a database: query metadata is committed in `crates/bayan-db-*/.sqlx/`. See [AGENTS.md](AGENTS.md) for the rules and workflow.
 
 ## Where things are decided
 
