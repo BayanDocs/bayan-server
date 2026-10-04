@@ -23,7 +23,6 @@ sqlx = { version = "=0.9.0", default-features = false, features = ["macros", "mi
 thiserror = "=2.0.21"
 tokio = { version = "=1.53.2", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 toml = { version = "=1.1.6", default-features = false, features = ["parse", "serde", "std"] }
-tower = { version = "=0.5.3", default-features = false, features = ["util"] }
 tower-http = { version = "=0.7.1", default-features = false, features = ["fs", "limit", "timeout"] }
 tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
