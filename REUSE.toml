@@ -1,0 +1,20 @@
+# REUSE configuration (https://reuse.software): which license applies to which files in bayan-server.
+# Decision and reasons: ADR-0003; plain-language FAQ: LICENSING.md (both in https://github.com/BayanDocs/docs).
+# Full license texts are in LICENSES/. When several annotations match a file, the last one wins, so specific areas come after the default.
+# A file's own SPDX header, if it has one, takes precedence over this file.
+version = 1
+
+# Default for the whole repository: AGPL-3.0-or-later.
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 BayanDocs contributors"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Integration kits (machine-readable API descriptions, SDKs, examples): Apache-2.0, so companies can integrate without touching AGPL code.
+# They must never contain, copy from or depend on AGPL server code or GPL core code.
+[[annotations]]
+path = "integrations/**"
+SPDX-FileCopyrightText = "2026 BayanDocs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Third-party files keep their own license and copyright: record them here or in a `.license` file next to them.

@@ -19,7 +19,7 @@ The plan, decisions (ADRs), specifications and work packages live in the [BayanD
 
 ## Rules specific to bayan-server
 
-- **Licensing (ADR-0003):** the server is AGPL-3.0-or-later, except `integrations/` (machine-readable API descriptions, SDKs and examples), which is Apache-2.0 so companies can integrate without touching AGPL code. `integrations/` must never contain, copy from or depend on AGPL server code or GPL core code; it is written against the published specifications in `docs/specs/protocols/`. The server shows a "Source code" link to the exact source of the running version (OPS-08); keep it working.
+- **Licensing (ADR-0003):** the server is AGPL-3.0-or-later, except `integrations/` (machine-readable API descriptions, SDKs and examples), which is Apache-2.0 so companies can integrate without touching AGPL code. `integrations/` must never contain, copy from or depend on AGPL server code or GPL core code; it is written against the published specifications in `docs/specs/protocols/`. The server shows a "Source code" link to the exact source of the running version (OPS-08); keep it working. `REUSE.toml` records which license applies to which files and `LICENSES/` holds the full texts; keep `reuse lint` passing, and add a new license text only with `reuse download <SPDX-ID>`.
 - **Zero-knowledge invariant (ADR-0015, ADR-0016):** no code path receives, stores, derives or logs document plaintext or document keys. Document data is opaque ciphertext to the server. Never add a feature that requires reading content (server-side search, previews, content in notifications); such features are built on clients.
 - **Authorization is enforced twice:** the server enforces roles from the authenticated connection and public group state; clients independently verify. Server changes must not assume clients will catch server mistakes, and vice versa.
 - **Metadata minimization:** store and log only what is needed to route ciphertext; every stored field is justified in the threat model's metadata inventory.
@@ -34,3 +34,5 @@ The plan, decisions (ADRs), specifications and work packages live in the [BayanD
 ## Dependency mechanisms
 
 Exact `=x.y.z` requirements in `[workspace.dependencies]`; `Cargo.lock` committed and builds run with `--locked`; `.cargo/config.toml` sets `global-min-publish-age = "1 day"`; a lockfile-age check and `cargo deny` run in CI (X-003). Base images are pinned by digest and updated only in the monthly dependency session.
+
+In BayanDocs cloud sessions the tools are preinstalled at pinned versions by `docs/scripts/cloud-environment-setup.sh`; run `bayandocs-tools` to list them. If a tool is missing, install the version pinned there (never a newer one) and mention it in the pull request.
