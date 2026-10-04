@@ -1,0 +1,118 @@
+# Continuous integration for bayan-server (SRV-001): the verification gate, the PostgreSQL integration test, and the container build, smoke test and vulnerability scan.
+# Conventions (ADR-0017, X-002): every action pinned to a full commit SHA with its version in a comment, no permissions beyond reading the repository, timeouts on every job, no credentials left in the checkout, first-party actions only.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  GRYPE_CHECK_FOR_APP_UPDATE: "false"
+
+jobs:
+  verify:
+    name: Verification gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: Install pinned tools (scripts/dev-setup.sh)
+        run: scripts/dev-setup.sh cargo-deny
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            target/
+          key: verify-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      - name: cargo xtask verify
+        run: cargo xtask verify
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # postgres:18.6-trixie, created 2026-09-19.
+        image: docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+        env:
+          # A throwaway database that exists only for this job.
+          POSTGRES_USER: bayan
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: bayan
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready --username bayan"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      BAYAN_TEST_POSTGRES_URL: postgres://bayan:ci-only@127.0.0.1:5432/bayan
+      BAYAN_SQLX_POSTGRES_URL: postgres://bayan:ci-only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            target/
+          key: postgres-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      - name: The server starts with PostgreSQL (cargo xtask test-postgres)
+        run: cargo xtask test-postgres
+      - name: Committed sqlx query metadata matches migrations and queries (cargo xtask sqlx-prepare --check)
+        run: cargo xtask sqlx-prepare --check
+
+  container:
+    name: Container image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned tools (scripts/dev-setup.sh)
+        run: scripts/dev-setup.sh grype
+      - name: Build the image
+        run: docker build --build-arg BAYAN_BUILD_COMMIT="$GITHUB_SHA" --tag bayan-server:ci .
+      - name: Smoke test (read-only root filesystem, non-root user, health check, clean shutdown)
+        run: scripts/container-smoke-test.sh bayan-server:ci
+      - name: Report the image size
+        run: |
+          {
+            echo "### Container image"
+            echo
+            echo "| Image | Size |"
+            echo "|---|---|"
+            echo "| bayan-server:ci (${GITHUB_SHA}) | $(docker image ls bayan-server:ci --format '{{.Size}}') ($(docker image inspect --format '{{.Size}}' bayan-server:ci) bytes) |"
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Vulnerability scan of the image's operating-system packages (grype)
+        run: grype bayan-server:ci --fail-on high
+      - name: Vulnerability scan of the Rust crates compiled into the binary (grype)
+        run: grype file:Cargo.lock --fail-on high
