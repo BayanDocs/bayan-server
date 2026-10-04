@@ -14,7 +14,7 @@ So an environment variable always wins over the file, and the file wins over the
 
 **Secrets from files.** A setting that may contain a secret also has a `_FILE` form whose value is the path of a file holding the secret (`BAYAN_DATABASE_URL_FILE`, or `database_url_file` in the TOML file). This keeps passwords out of the process environment, where other tools may print them, and works with Docker and Kubernetes secrets. One trailing line ending in the file is ignored. Setting both forms of the same setting is an error.
 
-**Strict validation.** The server refuses to start, with a message naming the problem, when a value is invalid or out of range, when an environment variable starting with `BAYAN_` is not one of the settings below, or when the TOML file contains an unknown key. This catches typos that would otherwise silently fall back to a default. Error messages name the setting but never print a secret's value. The exit code for configuration errors is 78.
+**Strict validation.** The server refuses to start, with a message naming the problem, when a value is invalid or out of range, when an environment variable starting with `BAYAN_` is not one of the settings below, or when the TOML file contains an unknown key. This catches typos that would otherwise silently fall back to a default. Error messages name the setting, and for the TOML file the line number and the key, but never repeat a value, a file path or a file's contents, because a secret may have been put in the wrong place by mistake. For example, a URL accidentally put under `database_max_connections` is reported as `invalid configuration file (BAYAN_CONFIG_FILE) at line 1, key `database_max_connections`: wrong kind of value; expected a whole number`. The exit code for configuration errors is 78.
 
 ## Settings
 
@@ -30,8 +30,9 @@ So an environment variable always wins over the file, and the file wins over the
 | `BAYAN_LOG_FORMAT` | `log_format` | `text` | `text` for human-readable lines, or `json` for one JSON object per line. |
 | `BAYAN_LOG_LEVEL` | `log_level` | `info` | `error`, `warn`, `info`, `debug` or `trace`. |
 | `BAYAN_MAX_REQUEST_BODY_BYTES` | `max_request_body_bytes` | `1048576` (1 MiB) | Largest accepted request body; larger requests get `413 Payload Too Large`. 1 byte to 1 GiB. |
-| `BAYAN_REQUEST_TIMEOUT_SECS` | `request_timeout_secs` | `30` | Requests not answered in time get `408 Request Timeout`. 1 to 3600. |
-| `BAYAN_SHUTDOWN_GRACE_SECS` | `shutdown_grace_secs` | `30` | After `SIGTERM` or `SIGINT`, how long requests in progress may take to finish before the server stops anyway. 0 to 3600. |
+| `BAYAN_REQUEST_TIMEOUT_SECS` | `request_timeout_secs` | `30` | Once a request's headers have arrived, the time it may take (including reading its body) before it is answered with `408 Request Timeout`. 1 to 3600. |
+| `BAYAN_HEADER_READ_TIMEOUT_SECS` | `header_read_timeout_secs` | `10` | Time a connection gets to send a complete request line and headers; connections that do not are closed without an answer. The same limit closes connections that stay idle, before their first request or between keep-alive requests. Behind a reverse proxy that keeps idle connections to the server open longer than this, raise it above the proxy's idle timeout (or lower the proxy's) to avoid the proxy reusing a connection the server is just closing. 1 to 300. |
+| `BAYAN_SHUTDOWN_GRACE_SECS` | `shutdown_grace_secs` | `5` | After `SIGTERM` or `SIGINT`, how long requests in progress may take to finish before the server stops anyway; closing the database afterwards takes at most 2 more seconds. Keep it below your orchestrator's stop timeout (Docker: 10 seconds, Kubernetes: 30 seconds), or the server is killed before it can stop cleanly. 0 to 3600. |
 
 Example TOML file:
 
@@ -49,12 +50,13 @@ web_dir = "/srv/bayan-web"
 - **PostgreSQL (optional, for larger deployments):** set `BAYAN_DATABASE_URL_FILE` (or `BAYAN_DATABASE_URL`). The database must exist; the server creates its tables.
 - **Migrations** are applied automatically at startup, in both cases. A database that has migrations this server version does not know (for example after a downgrade) is refused.
 - **No TLS to PostgreSQL yet.** Every TLS implementation available to the database driver contains C or assembly code, which needs a separate decision under ADR-0006. Until then, run PostgreSQL on the same host or a private network, and do not use `sslmode=require` (it fails to connect).
+- **`PG*` variables and password files are read by the driver, outside the `BAYAN_*` checks.** Like PostgreSQL's own tools, the database driver fills in anything the URL leaves out from the standard environment variables `PGHOST`, `PGHOSTADDR`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`, `PGAPPNAME` and `PGOPTIONS`, and, when the URL has no password, from a password file (`PGPASSFILE`, or `.pgpass` in the home directory). The server's strict validation does not see these: a misspelled `PG*` variable is silently ignored, and `PGPASSWORD` puts the password into the environment, which `BAYAN_DATABASE_URL_FILE` exists to avoid. Put the whole connection, password included, in the URL file and leave the `PG*` variables unset. (The application name is always `bayan-server`, whatever `PGAPPNAME` says.) In the container the root filesystem is read-only, so no password file exists unless you mount one.
 
 ## Logs
 
-Logs go to standard error. They contain operational facts only: for each request its ID, method, matched route template (for example `/readyz`; anything else is logged as `other` or `-`), status and duration. They never contain request or response bodies, header values (including `Authorization` and `Cookie`), query strings, the paths clients requested, document content, titles, file names or user identifiers. The test `tests/logging_text.rs` / `tests/logging_json.rs` in `crates/bayan-server` enforces this at the `trace` level.
+Logs go to standard error. They contain operational facts only: for each request its ID, method, matched route template (for example `/readyz`; anything else is logged as `other` or `-`), status and duration. They never contain request or response bodies, header values (including `Authorization` and `Cookie`), query strings, the paths clients requested, document content, titles, file names or user identifiers. Log events from dependencies that can contain secrets are switched off at every level (today one: the database driver's report of a malformed password-file line, which would quote the line). The tests `tests/logging_text.rs` and `tests/logging_json.rs` in `crates/bayan-server` enforce all of this at the `trace` level.
 
-Every response carries an `x-request-id` header with the ID from the log, so a user's report can be matched to the log line. IDs sent by clients are replaced.
+Every response carries an `x-request-id` header with the ID from the log, so a user's report can be matched to the log line. IDs are 32 hexadecimal digits that look random: unlike a counter, they reveal nothing about how many requests the server has handled. IDs sent by clients are replaced.
 
 ## HTTP endpoints
 

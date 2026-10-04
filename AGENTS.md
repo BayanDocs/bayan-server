@@ -44,6 +44,8 @@ Run `cargo xtask verify` before every push. In order it runs `cargo fmt --check`
 - **Logging:** log only content-free facts. Never log request bodies, header values, query strings, raw paths, document content, titles, file names, user identifiers or secrets; `tests/logging_*.rs` must keep passing. Secrets are wrapped in `config::Secret`, whose `Debug` output is redacted.
 - **Configuration:** every new setting gets an environment variable, a TOML key, validation with a clear error, a test, and a row in `docs/configuration.md`.
 - **Security headers** for every response are in `crates/bayan-server/src/http/headers.rs` (ADR-0014).
+- **Connections** are served by `crates/bayan-server/src/http/serve.rs` with hyper's HTTP/1 implementation, a timer and a header-read timeout, plus graceful shutdown. Do not switch to `axum::serve`: it gives hyper no timer, which silently disables the header-read timeout and lets idle or half-sent connections pile up. `tests/connections.rs` guards this.
+- **Request IDs** are keyed hashes of a counter (`http/request_id.rs`), so they reveal nothing about traffic volume; keep them opaque.
 - **Container:** base images are pinned by digest in `Dockerfile`, `compose.yaml` and the CI workflow; the builder's Rust version must equal `rust-toolchain.toml` (the build checks this).
 
 ## Dependency mechanisms
