@@ -1,0 +1,5 @@
+/target
+# Scratch files that `cargo xtask sqlx-prepare` and local runs may leave behind.
+/data
+*.sqlite3
+*.sqlite3-*
