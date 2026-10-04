@@ -27,7 +27,7 @@ docker run --detach --name bayan-server \
 - `--read-only` makes the container's root filesystem read-only; the server writes only to `/data`.
 - `--cap-drop ALL` and `--security-opt no-new-privileges` remove Linux privileges the server never needs.
 - A named volume takes the ownership of the image's `/data` (uid 65532) automatically. If you bind-mount a host directory instead, make it writable by uid 65532 first (`sudo chown 65532:65532 /srv/bayan-data`).
-- Publishing on `127.0.0.1` keeps the port private to the host. Put a reverse proxy that terminates HTTPS (Caddy, nginx, Traefik) in front of it; the server itself speaks plain HTTP for now. The server closes connections that do not send a complete request within `BAYAN_HEADER_READ_TIMEOUT_SECS` (10 seconds), including idle keep-alive connections; if the proxy keeps idle connections to the server longer, raise that setting above the proxy's idle timeout.
+- Publishing on `127.0.0.1` keeps the port private to the host. Put a reverse proxy that terminates HTTPS in front of it (see [HTTPS](#https) below); the server itself speaks plain HTTP. The server closes connections that do not send a complete request within `BAYAN_HEADER_READ_TIMEOUT_SECS` (10 seconds), including idle keep-alive connections; if the proxy keeps idle connections to the server longer, raise that setting above the proxy's idle timeout.
 
 With PostgreSQL, give the URL as a file so the password never appears in the environment:
 
@@ -46,6 +46,18 @@ docker run --detach --name bayan-server \
 The connection to PostgreSQL is not encrypted yet, so the database must be reachable only over a trusted network (see [configuration.md](configuration.md#database)).
 
 To serve the web app, mount its build read-only and point `BAYAN_WEB_DIR` at it: `--volume /srv/bayan-web:/web:ro --env BAYAN_WEB_DIR=/web`.
+
+## HTTPS
+
+Users reach the server through a reverse proxy that terminates HTTPS and forwards requests to the server on the loopback interface or a private network ([ADR-0028](https://github.com/BayanDocs/docs/blob/main/adr/0028-server-tls.md)). We recommend **[Caddy](https://caddyserver.com)**: it obtains and renews certificates by itself, uses hybrid post-quantum key exchange (X25519MLKEM768) by default when built with Go 1.24 or later, and is written in a memory-safe language. With the server published on `127.0.0.1:8080` as above, this is a complete `Caddyfile` (replace the host name with yours, and point its DNS record at the machine):
+
+```text
+docs.example.org {
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+Any other proxy works if it offers TLS 1.3 with X25519MLKEM768 (nginx does when built with OpenSSL 3.5 or later), forwards only to the server's private address, and, once collaboration arrives in a later release, passes WebSocket upgrades through. Post-quantum key exchange matters because someone who records encrypted traffic today could decrypt it once large quantum computers exist; document content is end-to-end encrypted anyway, but sign-ins and metadata travel through this connection.
 
 ## Check it
 

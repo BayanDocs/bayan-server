@@ -23,7 +23,7 @@ The plan, decisions (ADRs), specifications and work packages live in the [BayanD
 - **Zero-knowledge invariant (ADR-0015, ADR-0016):** no code path receives, stores, derives or logs document plaintext or document keys. Document data is opaque ciphertext to the server. Never add a feature that requires reading content (server-side search, previews, content in notifications); such features are built on clients.
 - **Authorization is enforced twice:** the server enforces roles from the authenticated connection and public group state; clients independently verify. Server changes must not assume clients will catch server mistakes, and vice versa.
 - **Metadata minimization:** store and log only what is needed to route ciphertext; every stored field is justified in the threat model's metadata inventory.
-- **Rust conventions** match bayan-core: pinned toolchain, edition 2024, `forbid(unsafe_code)`, strict lints, exact pins. SQLite (C) is permitted only as the embedded metadata database (ADR-0006 §3); no other C dependencies without an ADR amendment.
+- **Rust conventions** match bayan-core: pinned toolchain, edition 2024, `forbid(unsafe_code)`, strict lints, exact pins. SQLite (C) is permitted only as the embedded metadata database (ADR-0006 §3), and AWS-LC only as rustls's crypto provider for TLS (ADR-0028, ADR-0006 amendment 2026-10-04); no other C dependencies without an ADR amendment.
 - **Container rules:** minimal base image pinned by digest, non-root user, read-only root filesystem, data only under the mounted volume, signed images with SBOM and provenance (from X-101).
 - **Single binary, single container by default (ADR-0015):** optional services (PostgreSQL, S3-compatible storage) must never become mandatory for small deployments.
 
@@ -54,6 +54,6 @@ Exact `=x.y.z` requirements in `[workspace.dependencies]`; `Cargo.lock` committe
 
 The pinned toolchain (Rust 1.99) ignores `global-min-publish-age` and prints a warning about it on every Cargo command; Cargo enforces it from Rust 1.100. Until the workspace moves to 1.100, resolve the lockfile with the pinned nightly from the cloud environment, which already enforces it: `cargo +nightly-2026-10-02 update` (or `generate-lockfile`) reports "as of 24 hours ago" and skips younger versions. Then build and test with the pinned stable toolchain as usual.
 
-`deny.toml` bans crates that bundle C or C++ code. The only native code allowed is SQLite, compiled from source by `libsqlite3-sys` (ADR-0006 §3); any other needs an ADR amendment.
+`deny.toml` bans crates that bundle C or C++ code. Today the only native code in the build is SQLite, compiled from source by `libsqlite3-sys` (ADR-0006 §3). ADR-0028 also allows AWS-LC as rustls's crypto provider: the work package that adds TLS unbans `aws-lc-sys`, lets it use `cc`, and adds the `webpki-roots` license exception. Any other native code needs an ADR amendment.
 
 In BayanDocs cloud sessions the tools are preinstalled at pinned versions by `docs/scripts/cloud-environment-setup.sh`; run `bayandocs-tools` to list them. If a tool is missing, install the version pinned there (never a newer one) and mention it in the pull request.

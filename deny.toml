@@ -45,8 +45,10 @@ deny = [
     { crate = "bindgen", reason = "no native code beyond SQLite (ADR-0006)" },
     { crate = "openssl-sys", reason = "no native code beyond SQLite (ADR-0006)" },
     { crate = "native-tls", reason = "no native code beyond SQLite (ADR-0006)" },
-    { crate = "ring", reason = "contains C and assembly; TLS needs its own decision (ADR-0006)" },
-    { crate = "aws-lc-sys", reason = "contains C and assembly; TLS needs its own decision (ADR-0006)" },
+    # ADR-0028 chose rustls with aws-lc-rs for TLS, so ring stays banned (one crypto provider only).
+    { crate = "ring", reason = "not the chosen TLS crypto provider (ADR-0028)" },
+    # ADR-0028 allows AWS-LC as rustls's crypto provider. It stays banned until the work package that adds TLS (SRV-102) removes this line, adds aws-lc-sys to the `cc` wrappers above, and adds the webpki-roots license exception (ADR-0017 amendment 2026-10-04), with tests.
+    { crate = "aws-lc-sys", reason = "allowed only once TLS is added as ADR-0028 describes" },
     { crate = "libz-sys", reason = "no native code beyond SQLite (ADR-0006)" },
     { crate = "zstd-sys", reason = "no native code beyond SQLite (ADR-0006)" },
     { crate = "bzip2-sys", reason = "no native code beyond SQLite (ADR-0006)" },
