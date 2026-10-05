@@ -1,0 +1,9 @@
+# The page where people choose an issue form (work package X-001). The forms themselves are the other files in this folder.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/BayanDocs/bayan-server/security
+    about: Never in a public issue. Open the Security tab and choose "Report a vulnerability", as SECURITY.md explains.
+  - name: The BayanDocs plan, decisions and work packages
+    url: https://github.com/BayanDocs/docs
+    about: The knowledge base explains how BayanDocs is planned and built, and how to contribute.

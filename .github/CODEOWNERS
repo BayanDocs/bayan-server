@@ -1,0 +1,6 @@
+# Code owners (https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners): GitHub asks them to review every pull request that changes the files they own. When several lines match a file, the last one wins.
+# Work package X-001: the project owner is the default owner of everything.
+* @Gabrielc1925
+
+# Security-sensitive paths: parsers of untrusted input, cryptography, authentication, authorization, the FFI boundary and update mechanisms (docs/plan/07-quality-security-testing.md, section 3). A change to them needs a dedicated security review session in addition to the normal review. The work package that creates such a path adds it here.
+# None yet in this repository.

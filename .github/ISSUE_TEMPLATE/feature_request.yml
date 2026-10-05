@@ -1,0 +1,38 @@
+# Issue form for feature requests (work package X-001); the same in every BayanDocs repository. Syntax: https://docs.github.com/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms
+name: Feature request
+description: Suggest a new feature, or a change to how something works.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the suggestion. BayanDocs is built from a written plan: accepted ideas become work packages, and larger changes may need a new architecture decision record (ADR). The plan, the decisions and the work packages are in the [docs repository](https://github.com/BayanDocs/docs).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Who needs it, and what can they not do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What do you suggest?
+    validations:
+      required: true
+  - type: textarea
+    id: word
+    attributes:
+      label: How does Microsoft Word handle this?
+      description: If it matters for compatibility, describe what Word does as you observed it in use. Never include anything obtained by decompiling or disassembling Microsoft software (the clean-room rule in the docs repository's AGENTS.md).
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues, and this is not suggested yet.
+          required: true
