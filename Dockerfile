@@ -26,8 +26,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     if [ -s /run/secrets/extra-ca-certificates ]; then export CARGO_HTTP_CAINFO=/run/secrets/extra-ca-certificates; fi \
  && BAYAN_BUILD_COMMIT="${BAYAN_BUILD_COMMIT}" cargo build --locked --release --package bayan-server \
  && cp target/release/bayan-server /usr/local/bin/bayan-server
-# Everything else the final image contains: an empty data directory and user and group files that name uid and gid 65532 "nonroot", as tools that show user names expect.
-RUN mkdir -p /rootfs/etc /rootfs/data \
+# The final image's file tree, prepared with its modes: under /rootfs the server binary and user and group files that name uid and gid 65532 "nonroot" (as tools that show user names expect), and under /rootfs-data the data directory, which only the unprivileged user 65532 may enter (a new named volume takes its owner and mode).
+RUN mkdir -p /rootfs/usr/local/bin /rootfs/etc /rootfs-data \
+ && mkdir -m 0700 /rootfs-data/data \
+ && cp /usr/local/bin/bayan-server /rootfs/usr/local/bin/bayan-server \
  && printf 'root:x:0:0:root:/root:/sbin/nologin\nnonroot:x:65532:65532:nonroot:/nonexistent:/sbin/nologin\n' >/rootfs/etc/passwd \
  && printf 'root:x:0:\nnonroot:x:65532:\n' >/rootfs/etc/group \
  && chmod 0644 /rootfs/etc/passwd /rootfs/etc/group
@@ -42,10 +44,9 @@ LABEL org.opencontainers.image.title="bayan-server" \
       org.opencontainers.image.documentation="https://github.com/BayanDocs/bayan-server/blob/main/docs/configuration.md" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.revision="${BAYAN_BUILD_COMMIT}"
-COPY --from=builder /rootfs/etc/passwd /rootfs/etc/group /etc/
-# The data directory belongs to the unprivileged user 65532 and only it may enter; a new named volume takes this owner and mode.
-COPY --from=builder --chown=65532:65532 --chmod=0700 /rootfs/data /data
-COPY --from=builder /usr/local/bin/bayan-server /usr/local/bin/bayan-server
+# Both copy a directory's contents into /, so every entry keeps the mode set above, with every Docker version. (A directory that COPY creates as its destination gets default permissions instead, and some Docker versions ignore --chmod for it.) Only /data belongs to user 65532.
+COPY --from=builder /rootfs/ /
+COPY --from=builder --chown=65532:65532 /rootfs-data/ /
 # Self-test: the binary runs in the final image (it is static, and the image has no C library).
 RUN ["/usr/local/bin/bayan-server", "version"]
 ENV BAYAN_LISTEN=0.0.0.0:8080 \
