@@ -1,9 +1,9 @@
-# Container image of the BayanDocs server (ADR-0015): one static binary on a distroless base, running as a non-root user with a read-only root filesystem and a writable /data volume.
+# Container image of the BayanDocs server (ADR-0015): one static binary in an otherwise empty image, running as a non-root user with a read-only root filesystem and a writable /data volume.
 #
 # Build:  docker build --build-arg BAYAN_BUILD_COMMIT="$(git rev-parse HEAD)" -t bayan-server .
 # Run:    docker run --read-only -v bayan-data:/data -p 8080:8080 bayan-server
 #
-# Base images are pinned by digest and were at least 24 hours old when pinned (ADR-0017); they change only in the monthly dependency session.
+# The builder image is pinned by digest and was at least 24 hours old when pinned (ADR-0017); it changes only in the monthly dependency session. The final image has no base image.
 # The builder's Rust version must equal rust-toolchain.toml.
 
 # rust:1.99.0-alpine3.23, created 2026-10-01T23:55Z.
@@ -26,11 +26,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     if [ -s /run/secrets/extra-ca-certificates ]; then export CARGO_HTTP_CAINFO=/run/secrets/extra-ca-certificates; fi \
  && BAYAN_BUILD_COMMIT="${BAYAN_BUILD_COMMIT}" cargo build --locked --release --package bayan-server \
  && cp target/release/bayan-server /usr/local/bin/bayan-server
-# The data directory, owned by the distroless "nonroot" user (65532), becomes the volume's initial content.
-RUN mkdir -m 0700 /data && chown 65532:65532 /data
+# Everything else the final image contains: an empty data directory and user and group files that name uid and gid 65532 "nonroot", as tools that show user names expect.
+RUN mkdir -p /rootfs/etc /rootfs/data \
+ && printf 'root:x:0:0:root:/root:/sbin/nologin\nnonroot:x:65532:65532:nonroot:/nonexistent:/sbin/nologin\n' >/rootfs/etc/passwd \
+ && printf 'root:x:0:\nnonroot:x:65532:\n' >/rootfs/etc/group \
+ && chmod 0644 /rootfs/etc/passwd /rootfs/etc/group
 
-# gcr.io/distroless/static-debian13:nonroot, uploaded 2026-09-13. No shell, no package manager, no C library.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+# An empty base: the image holds only the files copied below. It has no shell, package manager, C library or operating-system packages, so there is nothing to patch besides the server. The ADR-0017 license allowlist covers every file in the containers we distribute: the binary contains only our code, our crates' dependencies, Rust's standard library, musl and LLVM's libunwind, all under allowed licenses. Anything added here must be allowed too; scripts/container-smoke-test.sh lists the files the image may contain.
+FROM scratch
 ARG BAYAN_BUILD_COMMIT=unknown
 LABEL org.opencontainers.image.title="bayan-server" \
       org.opencontainers.image.description="BayanDocs collaboration server: a zero-knowledge relay for end-to-end-encrypted documents" \
@@ -38,10 +41,11 @@ LABEL org.opencontainers.image.title="bayan-server" \
       org.opencontainers.image.url="https://github.com/BayanDocs/bayan-server" \
       org.opencontainers.image.documentation="https://github.com/BayanDocs/bayan-server/blob/main/docs/configuration.md" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
-      org.opencontainers.image.revision="${BAYAN_BUILD_COMMIT}" \
-      org.opencontainers.image.base.name="gcr.io/distroless/static-debian13:nonroot"
+      org.opencontainers.image.revision="${BAYAN_BUILD_COMMIT}"
+COPY --from=builder /rootfs/etc/passwd /rootfs/etc/group /etc/
+# The data directory belongs to the unprivileged user 65532 and only it may enter; a new named volume takes this owner and mode.
+COPY --from=builder --chown=65532:65532 --chmod=0700 /rootfs/data /data
 COPY --from=builder /usr/local/bin/bayan-server /usr/local/bin/bayan-server
-COPY --from=builder --chown=65532:65532 /data /data
 # Self-test: the binary runs in the final image (it is static, and the image has no C library).
 RUN ["/usr/local/bin/bayan-server", "version"]
 ENV BAYAN_LISTEN=0.0.0.0:8080 \

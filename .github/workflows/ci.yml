@@ -103,7 +103,7 @@ jobs:
         run: docker build --build-arg BAYAN_BUILD_COMMIT="$GITHUB_SHA" --tag bayan-server:ci .
       - name: Smoke test (read-only root filesystem, non-root user, health check, clean shutdown; reports the image size)
         run: scripts/container-smoke-test.sh bayan-server:ci
-      - name: Vulnerability scan of the image's operating-system packages (grype)
+      - name: Vulnerability scan of the image (grype; the image has no operating-system packages, so this catches a change that adds some)
         run: grype bayan-server:ci --fail-on high
       - name: Vulnerability scan of the Rust crates compiled into the binary (grype)
         run: grype file:Cargo.lock --fail-on high

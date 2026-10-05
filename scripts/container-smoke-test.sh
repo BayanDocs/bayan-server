@@ -1,27 +1,51 @@
 #!/usr/bin/env bash
 # Smoke test for the bayan-server container image (SRV-001). Usage: scripts/container-smoke-test.sh <image>
 #
-# Runs the image the way operators should: read-only root filesystem, all capabilities dropped, no privilege escalation, a named volume at /data. Then it checks that the container becomes healthy through its own HEALTHCHECK, answers /healthz, /readyz and /version, runs as the non-root user, stored its SQLite database on the volume, cannot write to its root filesystem, writes JSON logs, and stops cleanly on SIGTERM within Docker's default stop timeout even while a client holds a half-sent request open. It prints the image size at the end.
+# First it checks that the image contains only the files the Dockerfile puts there. Then it runs the image the way operators should: read-only root filesystem, all capabilities dropped, no privilege escalation, a named volume at /data. It checks that the container becomes healthy through its own HEALTHCHECK, answers /healthz, /readyz and /version, runs as the non-root user, stored its SQLite database on the volume, cannot write to its root filesystem, writes JSON logs, and stops cleanly on SIGTERM within Docker's default stop timeout even while a client holds a half-sent request open. It prints the image size at the end.
 set -euo pipefail
 
 image="${1:?usage: $0 <image>}"
 name="bayan-smoke-$$"
 volume="bayan-smoke-data-$$"
 holder=""
+saved="$(mktemp)"
 
 cleanup() {
   if [ -n "$holder" ]; then kill "$holder" 2>/dev/null || true; fi
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker volume rm "$volume" >/dev/null 2>&1 || true
+  rm -f "$saved"
 }
 trap cleanup EXIT
 
 fail() {
   echo "FAIL: $*" >&2
-  docker logs "$name" >&2 2>&1 || true
+  if docker container inspect "$name" >/dev/null 2>&1; then docker logs "$name" >&2 2>&1 || true; fi
   exit 1
 }
 pass() { echo "ok: $*"; }
+
+# ADR-0017: every file in a container we distribute must have a license on the allowlist, so the image holds nothing but the server binary, the data directory and the user and group files, each with its intended owner and permissions. Adding a file (a CA bundle, for example) means checking its license and extending this list. The files are read from the image's layers, because `docker export` would add files Docker creates in every container. Directories other than /data are not listed: a file inside one is listed by itself, and an empty one holds nothing (the self-test leaves mount points such as /proc).
+expected="data 0700 65532:65532
+etc/group 0644 0:0
+etc/passwd 0644 0:0
+usr/local/bin/bayan-server 0755 0:0"
+docker save --output "$saved" "$image"
+contents="$(python3 - "$saved" <<'PY'
+import json, sys, tarfile
+entries = {}
+with tarfile.open(sys.argv[1]) as image:
+    for layer in json.load(image.extractfile("manifest.json"))[0]["Layers"]:
+        with tarfile.open(fileobj=image.extractfile(layer), mode="r:*") as files:
+            for entry in files:
+                name = entry.name.removeprefix("./").rstrip("/")
+                if not entry.isdir() or name == "data":
+                    entries[name] = f"{name} {entry.mode:04o} {entry.uid}:{entry.gid}"
+print("\n".join(entries[name] for name in sorted(entries)))
+PY
+)"
+[ "$contents" = "$expected" ] || fail "the image's files are not the expected ones: $(echo "$contents" | tr '\n' ';')"
+pass "the image contains only the server binary, /data (uid 65532, mode 0700), /etc/passwd and /etc/group"
 
 docker volume create "$volume" >/dev/null
 docker run --detach --name "$name" \

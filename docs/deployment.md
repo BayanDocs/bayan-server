@@ -8,7 +8,7 @@ bayan-server ships as one container image that needs nothing else: by default it
 docker build --build-arg BAYAN_BUILD_COMMIT="$(git rev-parse HEAD)" -t bayan-server .
 ```
 
-The image is about 8.9 MB unpacked (about 4 MB compressed), 6.5 MB of which is the server itself. It contains one statically linked binary on the distroless `static` base image (no shell, no package manager, no C library), runs as the unprivileged user `nonroot` (uid and gid 65532), and has a health check that runs `bayan-server healthcheck`. Both base images are pinned by digest. Behind a TLS-inspecting proxy, pass the proxy's certificate bundle with `--secret id=extra-ca-certificates,src=<bundle.pem>`.
+The image is about 6.5 MB, almost all of it the server itself. It is built `FROM scratch`, so it contains nothing but the statically linked server binary, the `/data` directory, and `/etc/passwd` and `/etc/group` files of two lines each that name the unprivileged user `nonroot` (uid and gid 65532) it runs as. There is no shell, no package manager, no C library and no operating-system package to patch, and every file is under a license the project allows ([ADR-0017](https://github.com/BayanDocs/docs/blob/main/adr/0017-supply-chain-and-dependency-policy.md)). It has a health check that runs `bayan-server healthcheck`. The image that builds the binary is pinned by digest. Behind a TLS-inspecting proxy, pass the proxy's certificate bundle with `--secret id=extra-ca-certificates,src=<bundle.pem>`.
 
 The image sets `BAYAN_LISTEN=0.0.0.0:8080`, `BAYAN_DATA_DIR=/data` and `BAYAN_LOG_FORMAT=json`.
 
