@@ -1,0 +1,63 @@
+# cargo-deny configuration (ADR-0017): advisories, licenses, banned crates and allowed sources. `cargo xtask verify` runs `cargo deny --locked --all-features check`. X-003 completes the supply-chain checks.
+
+[graph]
+all-features = true
+
+[advisories]
+# RustSec advisories: vulnerable and unmaintained crates, and yanked versions, fail the check. Any exception must be listed here with a reason and a review date.
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# The allowlist from ADR-0017 §8. A dual-licensed crate qualifies if one option is on the list.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+confidence-threshold = 0.93
+# The allowlist is shared by every BayanDocs repository, so entries this workspace does not use yet are expected.
+unused-allowed-license = "allow"
+# This workspace's own crates are AGPL-3.0-or-later and unpublished; the allowlist applies to dependencies.
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+# ADR-0006: no C or C++ code beyond SQLite (bundled through libsqlite3-sys, used only for server metadata). `cc` may only be used by libsqlite3-sys; crates that bundle other native code are banned outright, so adding one fails the gate until an ADR amendment allows it.
+deny = [
+    { crate = "cc", wrappers = ["libsqlite3-sys"], reason = "C code is allowed only for SQLite (ADR-0006 §3)" },
+    { crate = "cmake", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "bindgen", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "openssl-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "native-tls", reason = "no native code beyond SQLite (ADR-0006)" },
+    # ADR-0028 chose rustls with aws-lc-rs for TLS, so ring stays banned (one crypto provider only).
+    { crate = "ring", reason = "not the chosen TLS crypto provider (ADR-0028)" },
+    # ADR-0028 allows AWS-LC as rustls's crypto provider. It stays banned until the work package that adds TLS (SRV-102) removes this line, adds aws-lc-sys to the `cc` wrappers above, and adds the webpki-roots license exception (ADR-0017 amendment 2026-10-04), with tests.
+    { crate = "aws-lc-sys", reason = "allowed only once TLS is added as ADR-0028 describes" },
+    { crate = "libz-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "zstd-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "bzip2-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "lzma-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+]
+
+[sources]
+# Only crates.io; no Git or alternative registries without an explicit entry here (ADR-0017).
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

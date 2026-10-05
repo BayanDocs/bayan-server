@@ -1,0 +1,58 @@
+# Local development with Docker Compose. Not a production deployment recipe: see docs/deployment.md.
+#
+#   docker compose up --build                      the server with its built-in SQLite database, on http://127.0.0.1:8080
+#   docker compose --profile postgres up --build   additionally a PostgreSQL server and a second server instance using it, on http://127.0.0.1:8081
+#
+# Both server containers run like production: read-only root filesystem, all capabilities dropped, no privilege escalation, data only on the volume.
+
+x-server: &server
+  build:
+    context: .
+  image: bayan-server:dev
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+services:
+  server:
+    <<: *server
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: ["server-data:/data"]
+    environment:
+      BAYAN_LOG_FORMAT: text
+      BAYAN_LOG_LEVEL: debug
+
+  server-postgres:
+    <<: *server
+    profiles: [postgres]
+    ports: ["127.0.0.1:8081:8080"]
+    volumes: ["server-postgres-data:/data"]
+    environment:
+      BAYAN_LOG_FORMAT: text
+      BAYAN_LOG_LEVEL: debug
+      BAYAN_DATABASE_URL: postgres://bayan@postgres:5432/bayan
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    profiles: [postgres]
+    # postgres:18.6-trixie, created 2026-09-19. Pinned by digest; updated in the monthly dependency session.
+    image: docker.io/library/postgres:18.6-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+    environment:
+      POSTGRES_USER: bayan
+      POSTGRES_DB: bayan
+      # Development only: no password, which is acceptable solely because this port is never published outside the Compose network. Never do this in production.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes: ["postgres-data:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "--username", "bayan"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  server-data:
+  server-postgres-data:
+  postgres-data:

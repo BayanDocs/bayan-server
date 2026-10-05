@@ -1,0 +1,12 @@
+# Cargo configuration shared by every build of this workspace.
+
+[registry]
+# ADR-0017: never resolve a crate version published less than 24 hours ago. Cargo enforces this natively from Rust 1.100 (2026-11-12); the pinned 1.99 toolchain ignores the key with a warning, so until the workspace moves to 1.100 resolution is done with a toolchain that enforces it, and CI checks lockfile ages (X-003).
+global-min-publish-age = "1 day"
+
+[env]
+# Build the sqlx query macros from the committed query metadata (crates/bayan-db-*/.sqlx) so that no live database is needed to compile. `cargo xtask sqlx-prepare` overrides this to regenerate the metadata.
+SQLX_OFFLINE = "true"
+
+[alias]
+xtask = "run --locked --quiet --package xtask --"
