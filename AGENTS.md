@@ -35,6 +35,8 @@ Run `cargo xtask verify` before every push. In order it runs `cargo fmt --check`
 - `cargo xtask sqlx-prepare --check` with `BAYAN_SQLX_POSTGRES_URL` set: the committed sqlx query metadata (`crates/bayan-db-*/.sqlx/`) must match the migrations and queries;
 - the container build, `scripts/container-smoke-test.sh` (read-only root filesystem, non-root user, health check, clean shutdown) and the grype vulnerability scan of the image and of `Cargo.lock`.
 
+Two more workflows run on every pull request, as in every BayanDocs repository: the DCO check (`.github/workflows/dco.yml`; the rules are in `CONTRIBUTING.md`) and `reuse lint` (`.github/workflows/reuse.yml`).
+
 `scripts/dev-setup.sh` installs the pinned non-Rust tools (cargo-deny, grype) with checksum verification.
 
 ## Working in this repository
