@@ -1,6 +1,8 @@
 //! The HTTP/1.1 connection loop.
 //!
 //! `axum::serve` gives hyper no timer, which silently turns off hyper's header-read timeout: a client could then hold a connection open forever by sending nothing, or half a request, and enough such connections exhaust the server's file descriptors. This loop serves every connection with hyper's HTTP/1 implementation, a Tokio timer and a header-read timeout. The timeout runs whenever the server waits for a request: on a new connection, while headers are arriving, and on an idle keep-alive connection between requests. Graceful shutdown closes idle connections at once, lets requests in progress finish, and gives up after the grace period.
+//!
+//! Connection upgrades (WebSockets) are not enabled yet. The work package that adds them must call `with_upgrades()` on each connection, and must then start each connection's graceful shutdown itself: hyper-util's `GracefulShutdown` cannot watch the resulting `UpgradeableConnection` (it accepts one only from its `auto` builder, which brings in HTTP/2). Once a connection is upgraded, neither the header-read timeout nor graceful shutdown covers it any more, so WebSocket connections also need their own idle timeout and a close frame at shutdown.
 
 use std::future::Future;
 use std::io;

@@ -27,7 +27,7 @@ docker run --detach --name bayan-server \
 - `--read-only` makes the container's root filesystem read-only; the server writes only to `/data`.
 - `--cap-drop ALL` and `--security-opt no-new-privileges` remove Linux privileges the server never needs.
 - A named volume takes the ownership of the image's `/data` (uid 65532) automatically. If you bind-mount a host directory instead, make it writable by uid 65532 first (`sudo chown 65532:65532 /srv/bayan-data`).
-- Publishing on `127.0.0.1` keeps the port private to the host. Put a reverse proxy that terminates HTTPS in front of it (see [HTTPS](#https) below); the server itself speaks plain HTTP. The server closes connections that do not send a complete request within `BAYAN_HEADER_READ_TIMEOUT_SECS` (10 seconds), including idle keep-alive connections; if the proxy keeps idle connections to the server longer, raise that setting above the proxy's idle timeout.
+- Publishing on `127.0.0.1` keeps the port private to the host. Put a reverse proxy that terminates HTTPS in front of it (see [HTTPS](#https) below); the server itself speaks plain HTTP. The server closes connections that do not send a complete request within `BAYAN_HEADER_READ_TIMEOUT_SECS` (10 seconds), including idle keep-alive connections, so configure the proxy to close its idle connections to the server sooner, as the Caddyfile below does.
 
 With PostgreSQL, give the URL as a file so the password never appears in the environment:
 
@@ -53,11 +53,17 @@ Users reach the server through a reverse proxy that terminates HTTPS and forward
 
 ```text
 docs.example.org {
-	reverse_proxy 127.0.0.1:8080
+	reverse_proxy 127.0.0.1:8080 {
+		transport http {
+			keepalive 5s
+		}
+	}
 }
 ```
 
-Any other proxy works if it offers TLS 1.3 with X25519MLKEM768 (nginx does when built with OpenSSL 3.5 or later), forwards only to the server's private address, and, once collaboration arrives in a later release, passes WebSocket upgrades through. Post-quantum key exchange matters because someone who records encrypted traffic today could decrypt it once large quantum computers exist; document content is end-to-end encrypted anyway, but sign-ins and metadata travel through this connection.
+`keepalive 5s` makes Caddy close a connection to the server after 5 idle seconds, before the server's own 10-second limit closes it. With Caddy's default of 2 minutes, Caddy could send a request on a connection at the moment the server closes it, and the user would get an occasional `502 Bad Gateway`.
+
+Any other proxy works if it offers TLS 1.3 with X25519MLKEM768 (nginx does when built with OpenSSL 3.5 or later), forwards only to the server's private address, closes idle connections to the server before `BAYAN_HEADER_READ_TIMEOUT_SECS` runs out, and, once collaboration arrives in a later release, passes WebSocket upgrades through. Post-quantum key exchange matters because someone who records encrypted traffic today could decrypt it once large quantum computers exist; document content is end-to-end encrypted anyway, but sign-ins and metadata travel through this connection.
 
 ## Check it
 
