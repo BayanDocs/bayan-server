@@ -25,8 +25,11 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
-/// Log targets in dependencies that are never recorded, because they can contain secrets. sqlx's PostgreSQL driver reports a malformed line of a `.pgpass` password file by logging the whole line, password included.
-pub const SUPPRESSED_TARGETS: [&str; 1] = ["sqlx_postgres::options::pgpass"];
+/// Log targets in dependencies that are never recorded, because they can contain secrets. sqlx's PostgreSQL driver reports a malformed line of a `.pgpass` password file by logging the whole line, password included (`options::pgpass`), and a connection URL's query parameter it does not read by logging the parameter's value (`options::parse`). The configuration check already refuses such URLs at startup; suppressing the target is the backstop.
+pub const SUPPRESSED_TARGETS: [&str; 2] = [
+    "sqlx_postgres::options::pgpass",
+    "sqlx_postgres::options::parse",
+];
 
 /// Disables events and spans from [`SUPPRESSED_TARGETS`] for the whole subscriber, at every level.
 struct SuppressSecretSources;

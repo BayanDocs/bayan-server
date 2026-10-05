@@ -1,6 +1,6 @@
 //! The content-free logging check shared by `tests/logging_text.rs` and `tests/logging_json.rs` (SRV-001 AC-3, threat T20).
 //!
-//! Every log line the process writes, at the most verbose level and from every library, is captured while requests full of canary values reach the server: in bodies, `Authorization` and `Cookie` headers, query strings, paths, other headers, client-supplied request IDs and an unknown method. A dependency's log event that would quote a password file line is emitted too. Not one canary may appear in the logs.
+//! Every log line the process writes, at the most verbose level and from every library, is captured while requests full of canary values reach the server: in bodies, `Authorization` and `Cookie` headers, query strings, paths, other headers, client-supplied request IDs and an unknown method. The database driver's log events that would quote a password file line or a URL parameter's value are emitted too. Not one canary may appear in the logs.
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -85,6 +85,13 @@ pub async fn run(format: LogFormat) {
         target: "sqlx_postgres::options::pgpass",
         line = "db.internal:5432:bayan:bayan:Canary-Pgpass-8",
         "Malformed line in pgpass file: invalid escape"
+    );
+    // What it logs for a URL query parameter it does not read: the name and value, here libpq's key passphrase. The configuration check refuses such URLs; the subscriber must drop the event anyway.
+    tracing::warn!(
+        target: "sqlx_postgres::options::parse",
+        key = "sslpassword",
+        value = "Canary-UrlParameter-9",
+        "ignoring unrecognized connect parameter"
     );
     server.stop().await;
 

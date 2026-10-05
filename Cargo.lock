@@ -83,6 +83,7 @@ name = "bayan-db-postgres"
 version = "0.1.0"
 dependencies = [
  "sqlx",
+ "tracing",
 ]
 
 [[package]]

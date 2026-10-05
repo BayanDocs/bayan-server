@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use bayan_db_postgres::UrlProblem;
 use serde::Deserialize;
 
 /// Prefix of every environment variable the server reads.
@@ -453,16 +454,28 @@ fn database_config(
             path: data_dir.join(SQLITE_FILE_NAME),
         }),
         Some((setting, url)) => {
-            // Only the scheme is inspected and reported; the rest of the URL may hold a password.
-            if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-                Ok(DatabaseConfig::Postgres {
-                    url: Secret::new(url),
-                })
-            } else {
-                Err(invalid(
+            // Only the scheme and the query parameters' names are inspected, and nothing from the URL is reported: any part of it may hold a password.
+            if !(url.starts_with("postgres://") || url.starts_with("postgresql://")) {
+                return Err(invalid(
                     setting,
                     "expected a postgres:// or postgresql:// URL; leave it unset to use the built-in SQLite database",
-                ))
+                ));
+            }
+            // The driver would silently ignore these parts of the URL, and log an ignored parameter's value.
+            match bayan_db_postgres::check_url(&url) {
+                Ok(()) => Ok(DatabaseConfig::Postgres {
+                    url: Secret::new(url),
+                }),
+                Err(UrlProblem::UnrecognizedParameter(position)) => Err(invalid(
+                    setting,
+                    &format!(
+                        "query parameter {position} is not one the PostgreSQL driver reads, so it would be ignored; parameter names are case-sensitive, and docs/configuration.md lists the supported ones"
+                    ),
+                )),
+                Err(UrlProblem::Fragment) => Err(invalid(
+                    setting,
+                    "the URL contains `#`, which ends the part the PostgreSQL driver reads; write a `#` in a password as %23",
+                )),
             }
         }
     }
@@ -795,6 +808,84 @@ mod tests {
             DatabaseConfig::Postgres {
                 url: Secret::new("postgres://bayan:hunter2@db/bayan".to_owned())
             }
+        );
+    }
+
+    #[test]
+    fn postgres_url_parameters_the_driver_reads_are_accepted() {
+        let url = "postgres://bayan@db/bayan?sslmode=verify-full&sslrootcert=/run/secrets/ca.pem&statement-cache-capacity=0&options[search_path]=bayan";
+        let config =
+            Config::from_vars(&vars(&[("BAYAN_DATABASE_URL", url)])).expect("valid configuration");
+        assert_eq!(
+            config.database,
+            DatabaseConfig::Postgres {
+                url: Secret::new(url.to_owned())
+            }
+        );
+    }
+
+    /// Regression test (SRV-001 review): the PostgreSQL driver silently ignores URL query parameters it does not read and logs their values, so such URLs are refused at startup, from every source, with errors that repeat nothing from the URL.
+    #[test]
+    fn postgres_url_parameters_the_driver_ignores_are_refused() {
+        const SECRET: &str = "Hunter2-Key-Passphrase";
+        let url = format!("postgres://bayan@db/bayan?sslmode=verify-full&sslpassword={SECRET}");
+        let url_file = temp_file("url-with-unknown-parameter", &url);
+        let config_file = temp_file(
+            "url-with-unknown-parameter.toml",
+            &format!("database_url = \"{url}\"\n"),
+        );
+        let fragment = format!("postgres://bayan:{SECRET}@db/bayan#sslmode=verify-full");
+        let errors = [
+            Config::from_vars(&vars(&[("BAYAN_DATABASE_URL", &url)])),
+            Config::from_vars(&vars(&[(
+                "BAYAN_DATABASE_URL_FILE",
+                url_file.to_str().expect("utf-8 path"),
+            )])),
+            Config::from_vars(&vars(&[(
+                "BAYAN_CONFIG_FILE",
+                config_file.to_str().expect("utf-8 path"),
+            )])),
+            // A misspelled `sslmode` would otherwise leave the connection weaker than configured, without a word.
+            Config::from_vars(&vars(&[(
+                "BAYAN_DATABASE_URL",
+                "postgres://bayan@db/bayan?sslmod=verify-full",
+            )])),
+            Config::from_vars(&vars(&[("BAYAN_DATABASE_URL", &fragment)])),
+        ]
+        .map(|result| result.expect_err("the URL is refused"));
+        for error in &errors {
+            for text in [error.to_string(), format!("{error:?}")] {
+                assert!(
+                    !text.contains(SECRET)
+                        && !text.contains("sslpassword")
+                        && !text.contains("sslmod="),
+                    "part of the URL in the error: {text}"
+                );
+            }
+        }
+        assert_eq!(
+            errors[0].to_string(),
+            "invalid value for BAYAN_DATABASE_URL: query parameter 2 is not one the PostgreSQL driver reads, so it would be ignored; parameter names are case-sensitive, and docs/configuration.md lists the supported ones"
+        );
+        for (error, setting) in errors[1..3]
+            .iter()
+            .zip(["BAYAN_DATABASE_URL_FILE", "database_url"])
+        {
+            assert!(
+                error
+                    .to_string()
+                    .starts_with(&format!("invalid value for {setting}: query parameter 2 ")),
+                "{error}"
+            );
+        }
+        assert!(
+            errors[3].to_string().contains("query parameter 1 "),
+            "{}",
+            errors[3]
+        );
+        assert_eq!(
+            errors[4].to_string(),
+            "invalid value for BAYAN_DATABASE_URL: the URL contains `#`, which ends the part the PostgreSQL driver reads; write a `#` in a password as %23"
         );
     }
 
