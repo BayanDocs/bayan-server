@@ -1,0 +1,35 @@
+# Checks the Developer Certificate of Origin (DCO) rules on every pull request (work package X-001; rules in CONTRIBUTING.md, decided in ADR-0003 §5): every commit by a person is signed off by its author, every commit by an AI agent names the agent and is not signed off by it, and a pull request with agent commits carries its human submitter's sign-off in the description.
+# It also runs when the description is edited, so adding the sign-off there is enough to re-run it. The check is .github/dco/check_dco.py (Python standard library only, no third-party action); its tests run first.
+# Workflow rules (ADR-0017): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository, no credentials kept after checkout, a timeout, and the pull_request trigger (never pull_request_target), so a pull request from a fork runs without write access or secrets.
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+concurrency:
+  group: dco-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dco:
+    name: DCO
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # check out the repository
+    steps:
+      - name: Check out the pull request with its full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the check reads every commit of the pull request and of the base branch
+          persist-credentials: false
+
+      - name: Test the DCO check
+        run: python3 -m unittest discover --start-directory .github/dco
+
+      # The event file holds the pull request's base, head and description; the description is read from it, never pasted into this script.
+      - name: Check the commits and the pull request description
+        run: python3 .github/dco/check_dco.py --event "$GITHUB_EVENT_PATH"

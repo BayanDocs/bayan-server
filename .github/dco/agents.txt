@@ -1,0 +1,7 @@
+# AI agent identities for the DCO check (check_dco.py; CONTRIBUTING.md, "Developer Certificate of Origin").
+#
+# A commit whose author has one of these email addresses was written by an AI agent. Such a commit must name the agent in a "Co-authored-by:" line and is never signed off by the agent; the person who submits the pull request signs off in its description instead (ADR-0003 §5). No "Signed-off-by:" line may name one of these addresses.
+#
+# One email address per line, optionally followed by a comment that says which agent it is. Letter case does not matter. Add an agent in a pull request of its own, in all five repositories together.
+
+noreply@anthropic.com  # Claude (Claude Code, Anthropic): commits as "Claude <noreply@anthropic.com>" and adds "Co-Authored-By: Claude … <noreply@anthropic.com>"
