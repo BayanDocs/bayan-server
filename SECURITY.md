@@ -8,7 +8,7 @@ BayanDocs opens documents from untrusted sources, and its collaboration server h
 
 Report them privately through GitHub: open the [**Security** tab of this repository](https://github.com/BayanDocs/bayan-server/security) and choose **Report a vulnerability**. Only you and the maintainers can see the report. If the problem affects another BayanDocs repository, or you are not sure which one, report it here anyway, and we will move it to the right place.
 
-If you cannot use GitHub, email **[SECURITY CONTACT ADDRESS — not chosen yet; the project owner adds it here]**.
+If you cannot use GitHub, email **<security@bayandocs.org>**.
 
 Please include, as far as you can:
 
