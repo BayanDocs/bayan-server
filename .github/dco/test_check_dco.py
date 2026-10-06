@@ -21,8 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_dco  # noqa: E402  (the import needs the path above)
 from check_dco import Identity  # noqa: E402
 
-PERSON = Identity("Jane Doe", "jane@example.com")
-SECOND_PERSON = Identity("Rafael Ortiz", "rafael@example.org")
+# People in the tests have addresses under .test, the domain reserved for testing (RFC 6761): the check refuses the domains reserved for examples, such as example.com, as sign-offs.
+PERSON = Identity("Jane Doe", "jane@doe.test")
+SECOND_PERSON = Identity("Rafael Ortiz", "rafael@ortiz.test")
 AGENT = Identity("Claude", "noreply@anthropic.com")
 AGENTS = {"noreply@anthropic.com": "Claude"}
 # The last section of the hand-off template, as a pull request description starts out.
@@ -135,7 +136,7 @@ class PeopleTests(DcoTestCase):
 
     def test_an_unsigned_commit_fails(self) -> None:
         self.repo.commit("Fix a typo", PERSON)
-        self.assert_fails(self.run_check(description=""), 'has no "Signed-off-by: Jane Doe <jane@example.com>" line')
+        self.assert_fails(self.run_check(description=""), 'has no "Signed-off-by: Jane Doe <jane@doe.test>" line')
 
     def test_one_unsigned_commit_among_signed_ones_fails(self) -> None:
         self.repo.commit("First", PERSON, trailers=[sign_off(PERSON)])
@@ -150,12 +151,18 @@ class PeopleTests(DcoTestCase):
         self.assert_fails(self.run_check(description=""), "has no")
 
     def test_the_name_in_the_sign_off_must_match_the_author(self) -> None:
-        self.repo.commit("Fix a typo", PERSON, trailers=["Signed-off-by: J. Doe <jane@example.com>"])
+        self.repo.commit("Fix a typo", PERSON, trailers=["Signed-off-by: J. Doe <jane@doe.test>"])
         self.assert_fails(self.run_check(description=""), "the name must match too")
 
     def test_letter_case_and_spacing_do_not_matter(self) -> None:
-        self.repo.commit("Fix a typo", PERSON, trailers=["signed-off-by: jane   DOE <Jane@Example.com>"])
+        self.repo.commit("Fix a typo", PERSON, trailers=["signed-off-by: jane   DOE <Jane@Doe.TEST>"])
         self.assert_passes(self.run_check(description=""))
+
+    def test_a_commit_made_under_an_example_address_fails(self) -> None:
+        # Git settings copied from an example: the sign-off matches the author, but neither names a real person's address.
+        placeholder = Identity("Your Name", "you@example.com")
+        self.repo.commit("Fix a typo", placeholder, trailers=[sign_off(placeholder)])
+        self.assert_fails(self.run_check(description=""), 'was made under the example address "Your Name <you@example.com>"', "git config user.email")
 
     def test_a_sign_off_line_outside_the_trailers_does_not_count(self) -> None:
         # Git reads trailers only from the last paragraph of a message; this line is in the middle.
@@ -195,11 +202,25 @@ class AgentTests(DcoTestCase):
 
     def test_an_agent_commit_without_a_sign_off_in_the_description_fails(self) -> None:
         self.repo.commit("feat: add a parser", AGENT, trailers=self.AGENT_TRAILERS)
-        self.assert_fails(self.run_check(description="## Summary\nA parser.\n"), 'has no "Signed-off-by: Your Name <you@example.com>" line')
+        self.assert_fails(self.run_check(description="## Summary\nA parser.\n"), 'has no "Signed-off-by: Your Name <your email address>" line')
 
     def test_the_template_placeholder_is_not_a_sign_off(self) -> None:
         self.repo.commit("feat: add a parser", AGENT, trailers=self.AGENT_TRAILERS)
         self.assert_fails(self.run_check(description=TEMPLATE_DCO_SECTION), "replace the template's placeholder")
+
+    def test_a_sign_off_with_an_example_address_does_not_count(self) -> None:
+        # The format shown in the instructions, copied without filling it in, or any other address at a domain reserved for examples.
+        self.repo.commit("feat: add a parser", AGENT, trailers=self.AGENT_TRAILERS)
+        for line in ["Signed-off-by: Your Name <you@example.com>", "Signed-off-by: Jane Doe <Jane@Example.ORG>", "Signed-off-by: Jane Doe <jane@mail.example.net>", "Signed-off-by: Jane Doe <jane@docs.example>"]:
+            with self.subTest(line=line):
+                self.assert_fails(self.run_check(description=line + "\n"), "a sign-off with an example address such as you@example.com does not count")
+
+    def test_an_example_line_next_to_a_real_sign_off_passes(self) -> None:
+        # For example a description that shows the format before the submitter's own line.
+        self.repo.commit("feat: add a parser", AGENT, trailers=self.AGENT_TRAILERS)
+        report = self.run_check(description="Signed-off-by: Your Name <you@example.com>\n" + sign_off(PERSON) + "\n")
+        self.assert_passes(report)
+        self.assertEqual(report.description.people if report.description else None, [PERSON])
 
     def test_the_filled_in_template_passes(self) -> None:
         self.repo.commit("feat: add a parser", AGENT, trailers=self.AGENT_TRAILERS)
@@ -385,7 +406,7 @@ class CommandLineTests(DcoTestCase):
 
     def test_in_github_actions_problems_become_annotations_and_a_summary(self) -> None:
         # Git itself removes "<" and ">" from names; the rest of this name tries to break out of the annotation and the summary table.
-        self.repo.commit("Fix a typo", Identity("50% | ::warning:: *Eve* & [link](x)", "eve@example.com"))
+        self.repo.commit("Fix a typo", Identity("50% | ::warning:: *Eve* & [link](x)", "eve@eve.test"))
         summary_file = self.repo.path / "summary.md"
         status, output = self.main("--event", str(self.event("")), environment={"GITHUB_ACTIONS": "true", "GITHUB_STEP_SUMMARY": str(summary_file)})
         self.assertEqual(status, 1, output)
@@ -429,9 +450,15 @@ class AgentsFileTests(unittest.TestCase):
 
 class IdentityTests(unittest.TestCase):
     def test_parsing(self) -> None:
-        self.assertEqual(check_dco.parse_identity(" Jane Doe <jane@example.com> "), PERSON)
+        self.assertEqual(check_dco.parse_identity(" Jane Doe <jane@doe.test> "), PERSON)
         for value in ["<human submitter's name and email>", "Jane Doe", "<jane@example.com>", "Jane Doe <jane at example.com>", "Jane <jane@example.com> (owner)"]:
             self.assertIsNone(check_dco.parse_identity(value), value)
+
+    def test_addresses_reserved_for_examples(self) -> None:
+        for email in ["you@example.com", "YOU@EXAMPLE.COM", "a@example.net", "a@example.org", "a@mail.example.com", "a@example", "a@docs.example", "a@example.com."]:
+            self.assertTrue(check_dco.is_example_address(email), email)
+        for email in ["noreply@anthropic.com", "jane@doe.test", "a@example.co", "a@examples.com", "a@myexample.com", "a@notexample.org", "a@example.com.au", "a@example.community"]:
+            self.assertFalse(check_dco.is_example_address(email), email)
 
     def test_names_are_compared_after_unicode_normalization(self) -> None:
         composed = Identity("José", "jose@example.com")

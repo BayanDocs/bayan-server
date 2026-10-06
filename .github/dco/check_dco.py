@@ -5,6 +5,7 @@
 #   2. A commit written by an AI agent (its author is listed in agents.txt next to this script) names the agent in a "Co-authored-by:" line and is not signed off, because only a person can certify the DCO. The pull request description must then contain a "Signed-off-by:" line from the person who submits the work.
 #   3. Nobody signs off in the name of an agent, neither in a commit nor in the description.
 #   4. A merge commit that only joins two branches, exactly as Git merges them by itself, adds nothing of its own and needs no sign-off. Any other merge commit (one that resolves a conflict or changes something) is checked like a normal commit.
+#   5. A sign-off names a real person's email address. An address at a domain reserved for examples (example.com, example.net, example.org, or one ending in .example) never counts, so a placeholder such as "you@example.com", copied from the instructions without filling it in, cannot pass for a sign-off. A commit whose author has such an address cannot be signed off at all.
 #   Co-authors named in "Co-authored-by:" lines are credited, not checked: the author's sign-off covers the whole commit.
 #
 # Usage:
@@ -43,6 +44,8 @@ DESCRIPTION_SIGN_OFF = re.compile(r"\s*signed-off-by:(?P<value>.*)", re.IGNORECA
 HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 OBJECT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")  # SHA-1 or SHA-256
 GIT_MINIMUM = (2, 38)  # `git merge-tree --write-tree`
+# Domains reserved for examples in documentation (RFC 2606 and RFC 6761), together with all their subdomains. No person has an email address there.
+EXAMPLE_DOMAINS = ("example.com", "example.net", "example.org", "example")
 
 
 class CheckError(Exception):
@@ -99,6 +102,12 @@ def load_agents(path: Path) -> Dict[str, str]:
 
 def is_agent(identity: Identity, agents: Dict[str, str]) -> bool:
     return identity.email.casefold() in agents
+
+
+def is_example_address(email: str) -> bool:
+    """True for an address at a domain reserved for examples, such as the "you@example.com" of the instructions, or at one of its subdomains."""
+    domain = email.rpartition("@")[2].rstrip(".").casefold()
+    return any(domain == reserved or domain.endswith("." + reserved) for reserved in EXAMPLE_DOMAINS)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +214,9 @@ def check_commit(commit: Commit, agents: Dict[str, str], clean_merge: bool) -> V
         if not any(identity is not None and is_agent(identity, agents) for identity in co_authors):
             problems.append(f'was written by the AI agent "{commit.author}" but does not name it in a "Co-authored-by:" line')
         return Verdict(commit, "agent", problems, "written by an AI agent: the pull request description needs a person's sign-off")
-    if not any(identity is not None and identity.same_person(commit.author) for identity in sign_offs):
+    if is_example_address(commit.author.email):
+        problems.append(f'was made under the example address "{commit.author}", which cannot sign off: set your own name and email address with `git config user.name` and `git config user.email`, then make the commit again (`git commit --amend --reset-author --signoff` redoes the last one)')
+    elif not any(identity is not None and identity.same_person(commit.author) for identity in sign_offs):
         near = [identity for identity in sign_offs if identity is not None and identity.same_email(commit.author)]
         if near:
             problems.append(f'is signed off as "{near[0]}", but its author is "{commit.author}": the name must match too')
@@ -219,12 +230,13 @@ class Description:
     people: List[Identity]  # valid sign-offs by people
     problems: List[str]
     malformed: int  # "Signed-off-by:" lines that are not "Name <email>", such as the template's placeholder
+    examples: int  # "Signed-off-by:" lines with an example address, such as "you@example.com", which do not count
 
 
 def check_description(text: str, agents: Dict[str, str]) -> Description:
     people: List[Identity] = []
     problems: List[str] = []
-    malformed = 0
+    malformed = examples = 0
     for line in HTML_COMMENT.sub("", text).splitlines():
         match = DESCRIPTION_SIGN_OFF.fullmatch(line)
         if match is None:
@@ -234,9 +246,11 @@ def check_description(text: str, agents: Dict[str, str]) -> Description:
             malformed += 1
         elif is_agent(identity, agents):
             problems.append(f'is signed off by the AI agent "{identity}", but only a person can sign off: remove that line')
+        elif is_example_address(identity.email):
+            examples += 1
         else:
             people.append(identity)
-    return Description(people, problems, malformed)
+    return Description(people, problems, malformed, examples)
 
 
 @dataclass
@@ -265,7 +279,9 @@ def check(repo: Path, head: str, excluded: Sequence[str], description_text: Opti
     report.description = description = check_description(description_text, agents)
     report.description_problems.extend(description.problems)
     if report.agent_commits and not description.people:
-        problem = 'has no "Signed-off-by: Your Name <you@example.com>" line from the person who submits this pull request, which is needed because AI agents wrote some of its commits'
+        problem = 'has no "Signed-off-by: Your Name <your email address>" line from the person who submits this pull request, which is needed because AI agents wrote some of its commits'
+        if description.examples:
+            problem += "; a sign-off with an example address such as you@example.com does not count: write your own name and email address"
         if description.malformed:
             problem += '; a "Signed-off-by:" line must hold a name and an email address in angle brackets (replace the template\'s placeholder with your own)'
         report.description_problems.append(problem)
@@ -279,7 +295,7 @@ def check(repo: Path, head: str, excluded: Sequence[str], description_text: Opti
 HOW_TO_FIX = [
     "How to fix it (CONTRIBUTING.md, \"Developer Certificate of Origin\"):",
     "  - your own commits: sign them off with `git commit --amend --signoff` (the last commit) or `git rebase --signoff <base branch>` (all of them), then push your branch again;",
-    "  - commits written by an AI agent: the person submitting the pull request adds a line \"Signed-off-by: Your Name <you@example.com>\" to its description; editing the description runs this check again.",
+    "  - commits written by an AI agent: the person submitting the pull request adds a line \"Signed-off-by: Your Name <your email address>\", with their own name and email address, to its description; editing the description runs this check again.",
 ]
 
 

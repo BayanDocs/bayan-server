@@ -36,7 +36,7 @@ Add `--signoff` (or `-s`) when you commit:
 git commit --signoff -m "fix(opc): reject ZIP entries with absolute paths"
 ```
 
-Git then ends the message with a line such as `Signed-off-by: Jane Doe <jane@example.com>`, taken from your Git settings (`git config user.name` and `git config user.email`). The sign-off must match the commit's author: the same name and email address, letter case aside.
+Git then ends the message with a line such as `Signed-off-by: Jane Doe <jane@example.com>`, taken from your Git settings (`git config user.name` and `git config user.email`). The sign-off must match the commit's author: the same name and email address, letter case aside. Use your own email address: an address at a domain reserved for examples, such as the `jane@example.com` above, never counts as a sign-off.
 
 If you forgot, sign off the last commit with `git commit --amend --signoff --no-edit`, or every commit of your branch with `git rebase --signoff origin/main`, and then update your own branch with `git push --force-with-lease`. Never force-push a branch that someone else is working on.
 
@@ -48,7 +48,7 @@ The DCO is a certification that only a person can make ([ADR-0003 §5](https://g
 
 - **AI agents never sign off**, neither in a commit nor in a pull request description.
 - **A commit written by an AI agent** has the agent as its author, using an identity listed in `.github/dco/agents.txt` (for example `Claude <noreply@anthropic.com>`), and names the agent in a `Co-authored-by:` line. Claude Code adds such a line, and a `Claude-Session:` link, by itself.
-- **The person who submits the pull request certifies the agent's work** (for now, the project owner). Before merging, they replace the placeholder in the template's "Developer Certificate of Origin" section with their own line, `Signed-off-by: Your Name <you@example.com>`, on a line of its own, and keep the same line at the end of the squash-merge commit's message.
+- **The person who submits the pull request certifies the agent's work** (for now, the project owner). Before merging, they replace the placeholder in the template's "Developer Certificate of Origin" section with their own line, `Signed-off-by: Your Name <your email address>`, on a line of its own, and keep the same line at the end of the squash-merge commit's message.
 - **If an agent commits under your own name** (for example Claude Code running on your computer with your Git settings), those commits are yours: review them, then sign them off yourself, for example with `git rebase --signoff origin/main`, before you push.
 
 ### What the DCO check checks
@@ -62,7 +62,7 @@ The DCO workflow (`.github/workflows/dco.yml`) checks every commit that a pull r
 | With co-authors (`Co-authored-by:` lines) | The author's sign-off covers the whole commit, including the parts that co-authors wrote; co-authors may add their own sign-off. An AI agent named as a co-author is credited, never signing off. |
 | A merge commit that Git could have made by itself, such as the one GitHub's "Update branch" button creates | Nothing: it adds no content of its own. |
 | A merge commit that resolves a conflict or changes anything | The same as any other commit, by its author. |
-| Any commit, and the description | No `Signed-off-by:` line may name an AI agent. |
+| Any commit, and the description | No `Signed-off-by:` line may name an AI agent, and none counts if its email address is at a domain reserved for examples (`example.com`, `example.net`, `example.org`, or one ending in `.example`): those are placeholders, not anyone's address. A commit whose author has such an address fails. |
 
 A sign-off counts only where `git commit --signoff` puts it: in the block of lines at the very end of the commit message. In a pull request description it must be a line of its own, not hidden in an HTML comment (`<!-- … -->`). To check your branch before pushing, run `python3 .github/dco/check_dco.py --base origin/main --head HEAD`, and add `--description FILE` to check a description saved in a file as well.
 
