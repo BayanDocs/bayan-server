@@ -136,7 +136,7 @@ class PeopleTests(DcoTestCase):
 
     def test_an_unsigned_commit_fails(self) -> None:
         self.repo.commit("Fix a typo", PERSON)
-        self.assert_fails(self.run_check(description=""), 'has no "Signed-off-by: Jane Doe <jane@doe.test>" line')
+        self.assert_fails(self.run_check(description=""), 'has no "Signed-off-by:" line with its author\'s email address, such as "Signed-off-by: Jane Doe <jane@doe.test>"')
 
     def test_one_unsigned_commit_among_signed_ones_fails(self) -> None:
         self.repo.commit("First", PERSON, trailers=[sign_off(PERSON)])
@@ -150,11 +150,16 @@ class PeopleTests(DcoTestCase):
         self.repo.commit("Fix a typo", PERSON, trailers=[sign_off(SECOND_PERSON)])
         self.assert_fails(self.run_check(description=""), "has no")
 
-    def test_the_name_in_the_sign_off_must_match_the_author(self) -> None:
+    def test_only_the_email_address_must_match_the_author(self) -> None:
+        # The owner's decision of 2026-10-06: the name in a sign-off may be written differently from the author's, for example shortened.
         self.repo.commit("Fix a typo", PERSON, trailers=["Signed-off-by: J. Doe <jane@doe.test>"])
-        self.assert_fails(self.run_check(description=""), "the name must match too")
+        self.assert_passes(self.run_check(description=""))
 
-    def test_letter_case_and_spacing_do_not_matter(self) -> None:
+    def test_the_author_s_name_with_another_email_address_fails(self) -> None:
+        self.repo.commit("Fix a typo", PERSON, trailers=["Signed-off-by: Jane Doe <jane@elsewhere.test>"])
+        self.assert_fails(self.run_check(description=""), "has no")
+
+    def test_letter_case_does_not_matter(self) -> None:
         self.repo.commit("Fix a typo", PERSON, trailers=["signed-off-by: jane   DOE <Jane@Doe.TEST>"])
         self.assert_passes(self.run_check(description=""))
 
@@ -460,10 +465,9 @@ class IdentityTests(unittest.TestCase):
         for email in ["noreply@anthropic.com", "jane@doe.test", "a@example.co", "a@examples.com", "a@myexample.com", "a@notexample.org", "a@example.com.au", "a@example.community"]:
             self.assertFalse(check_dco.is_example_address(email), email)
 
-    def test_names_are_compared_after_unicode_normalization(self) -> None:
-        composed = Identity("José", "jose@example.com")
-        decomposed = Identity("José", "jose@example.com")
-        self.assertTrue(composed.same_person(decomposed))
+    def test_only_email_addresses_are_compared(self) -> None:
+        self.assertTrue(Identity("Jane Doe", "Jane@Doe.TEST").same_email(Identity("J. Doe", "jane@doe.test")))
+        self.assertFalse(Identity("Jane Doe", "jane@doe.test").same_email(Identity("Jane Doe", "jane@elsewhere.test")))
 
 
 if __name__ == "__main__":

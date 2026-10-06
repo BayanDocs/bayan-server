@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Checks the Developer Certificate of Origin (DCO) rules of BayanDocs on the commits of a pull request. The rules are explained in CONTRIBUTING.md ("Developer Certificate of Origin") and were decided in ADR-0003 §5 (https://github.com/BayanDocs/docs/blob/main/adr/0003-licensing-and-contribution-model.md):
 #
-#   1. A commit written by a person carries a "Signed-off-by:" line with its author's name and email address (`git commit --signoff` adds it).
+#   1. A commit written by a person carries a "Signed-off-by:" line with its author's email address (`git commit --signoff` adds it). The name in that line may be written differently from the author's (the owner's decision of 2026-10-06).
 #   2. A commit written by an AI agent (its author is listed in agents.txt next to this script) names the agent in a "Co-authored-by:" line and is not signed off, because only a person can certify the DCO. The pull request description must then contain a "Signed-off-by:" line from the person who submits the work.
 #   3. Nobody signs off in the name of an agent, neither in a commit nor in the description.
 #   4. A merge commit that only joins two branches, exactly as Git merges them by itself, adds nothing of its own and needs no sign-off. Any other merge commit (one that resolves a conflict or changes something) is checked like a normal commit.
@@ -24,7 +24,6 @@ import os
 import re
 import subprocess
 import sys
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -61,15 +60,8 @@ class Identity:
         return f"{self.name} <{self.email}>"
 
     def same_email(self, other: Identity) -> bool:
+        """Same email address, ignoring letter case. Names are not compared: a sign-off may write its author's name differently."""
         return self.email.casefold() == other.email.casefold()
-
-    def same_person(self, other: Identity) -> bool:
-        """Same email address and same name, ignoring letter case and runs of spaces."""
-        return self.same_email(other) and _normalized_name(self.name) == _normalized_name(other.name)
-
-
-def _normalized_name(name: str) -> str:
-    return " ".join(unicodedata.normalize("NFC", name).split()).casefold()
 
 
 def parse_identity(value: str) -> Optional[Identity]:
@@ -216,12 +208,8 @@ def check_commit(commit: Commit, agents: Dict[str, str], clean_merge: bool) -> V
         return Verdict(commit, "agent", problems, "written by an AI agent: the pull request description needs a person's sign-off")
     if is_example_address(commit.author.email):
         problems.append(f'was made under the example address "{commit.author}", which cannot sign off: set your own name and email address with `git config user.name` and `git config user.email`, then make the commit again (`git commit --amend --reset-author --signoff` redoes the last one)')
-    elif not any(identity is not None and identity.same_person(commit.author) for identity in sign_offs):
-        near = [identity for identity in sign_offs if identity is not None and identity.same_email(commit.author)]
-        if near:
-            problems.append(f'is signed off as "{near[0]}", but its author is "{commit.author}": the name must match too')
-        else:
-            problems.append(f'has no "Signed-off-by: {commit.author}" line')
+    elif not any(identity is not None and identity.same_email(commit.author) for identity in sign_offs):
+        problems.append(f'has no "Signed-off-by:" line with its author\'s email address, such as "Signed-off-by: {commit.author}"')
     return Verdict(commit, "person", problems, "signed off by its author")
 
 

@@ -36,7 +36,7 @@ Add `--signoff` (or `-s`) when you commit:
 git commit --signoff -m "fix(opc): reject ZIP entries with absolute paths"
 ```
 
-Git then ends the message with a line such as `Signed-off-by: Jane Doe <jane@example.com>`, taken from your Git settings (`git config user.name` and `git config user.email`). The sign-off must match the commit's author: the same name and email address, letter case aside. Use your own email address: an address at a domain reserved for examples, such as the `jane@example.com` above, never counts as a sign-off.
+Git then ends the message with a line such as `Signed-off-by: Jane Doe <jane@example.com>`, taken from your Git settings (`git config user.name` and `git config user.email`). The sign-off must carry the same email address as the commit's author, letter case aside; the name in it may be written differently. Use your own email address: an address at a domain reserved for examples, such as the `jane@example.com` above, never counts as a sign-off.
 
 If you forgot, sign off the last commit with `git commit --amend --signoff --no-edit`, or every commit of your branch with `git rebase --signoff origin/main`, and then update your own branch with `git push --force-with-lease`. Never force-push a branch that someone else is working on.
 
@@ -57,7 +57,7 @@ The DCO workflow (`.github/workflows/dco.yml`) checks every commit that a pull r
 
 | Commit | What it needs |
 |---|---|
-| Written by a person | A `Signed-off-by:` line with its author's name and email address. |
+| Written by a person | A `Signed-off-by:` line with its author's email address (the name may be written differently). |
 | Written by an AI agent (its author is listed in `.github/dco/agents.txt`) | A `Co-authored-by:` line naming the agent, and no sign-off by the agent. The pull request description must then contain a person's `Signed-off-by:` line. |
 | With co-authors (`Co-authored-by:` lines) | The author's sign-off covers the whole commit, including the parts that co-authors wrote; co-authors may add their own sign-off. An AI agent named as a co-author is credited, never signing off. |
 | A merge commit that Git could have made by itself, such as the one GitHub's "Update branch" button creates | Nothing: it adds no content of its own. |
