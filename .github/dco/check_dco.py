@@ -24,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -280,6 +281,11 @@ def check(repo: Path, head: str, excluded: Sequence[str], description_text: Opti
 # Output
 # ---------------------------------------------------------------------------
 
+def visible(text: str) -> str:
+    """Text that may come from a commit or a description, with every control character (Unicode category Cc, such as a carriage return or the escape character that starts terminal colour codes) and every line or paragraph separator written out as an escape such as "\\r". GitHub's runner ends a log line at a carriage return too, so such a character could otherwise start a forged workflow command of its own. Comparisons use the raw text; only output goes through here."""
+    return "".join(repr(char)[1:-1] if unicodedata.category(char) in ("Cc", "Zl", "Zp") else char for char in text)
+
+
 HOW_TO_FIX = [
     "How to fix it (CONTRIBUTING.md, \"Developer Certificate of Origin\"):",
     "  - your own commits: sign them off with `git commit --amend --signoff` (the last commit) or `git rebase --signoff <base branch>` (all of them), then push your branch again;",
@@ -311,13 +317,12 @@ def describe(report: Report) -> List[str]:
     else:
         lines.append("Result: FAILED.")
         lines.extend(HOW_TO_FIX)
-    return lines
+    return [visible(line) for line in lines]
 
 
 def annotation(message: str) -> str:
-    """A GitHub Actions error annotation. The message is escaped, so text from a commit can never start a workflow command of its own."""
-    escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-    return f"::error title=DCO::{escaped}"
+    """A GitHub Actions error annotation. Control characters are written out visibly and "%" is escaped, so text from a commit can never start a workflow command of its own."""
+    return f"::error title=DCO::{visible(message).replace('%', '%25')}"
 
 
 def annotations(report: Report) -> List[str]:
@@ -331,8 +336,8 @@ def annotations(report: Report) -> List[str]:
 
 
 def _cell(text: str) -> str:
-    """Text for a Markdown table cell: no HTML, no Markdown formatting, no column breaks."""
-    text = html.escape(text, quote=False).replace("|", "&#124;")
+    """Text for a Markdown table cell: no control characters, HTML, Markdown formatting or column breaks."""
+    text = html.escape(visible(text), quote=False).replace("|", "&#124;")
     return re.sub(r"([\\`*_\[\]])", r"\\\1", text)
 
 
@@ -409,7 +414,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     raise CheckError(f"cannot read {args.description}: {error.strerror}") from None
         report = check(args.repo, head, excluded, description, agents)
     except CheckError as error:
-        print(f"The DCO check could not run: {error}", file=sys.stderr)
+        print(visible(f"The DCO check could not run: {error}"), file=sys.stderr)
         if in_actions:
             print(annotation(f"The DCO check could not run: {error}"))
         return 2

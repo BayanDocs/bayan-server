@@ -410,23 +410,48 @@ class CommandLineTests(DcoTestCase):
         self.assertEqual(stop.exception.code, 2)
 
     def test_in_github_actions_problems_become_annotations_and_a_summary(self) -> None:
-        # Git itself removes "<" and ">" from names; the rest of this name tries to break out of the annotation and the summary table.
-        self.repo.commit("Fix a typo", Identity("50% | ::warning:: *Eve* & [link](x)", "eve@eve.test"))
+        # Git itself removes "<", ">" and line feeds from names, but keeps a carriage return and the escape character: this name tries to break out of the annotation, the summary table and the log line, where GitHub's runner would read the text after the carriage return as a workflow command of its own.
+        name = "50% | ::warning:: *Eve* & [link](x)\r::warning title=DCO::Every DCO rule is met\x1b[8m"
+        self.repo.commit("Fix a typo", Identity(name, "eve@eve.test"))
+        # The test only means something if Git kept both characters (read as bytes: text mode would turn "\r" into "\n").
+        stored = subprocess.run(["git", "log", "-1", "--format=%an"], cwd=self.repo.work, env=self.repo.env, capture_output=True, check=True).stdout
+        self.assertEqual(stored.decode("utf-8"), name + "\n")
         summary_file = self.repo.path / "summary.md"
         status, output = self.main("--event", str(self.event("")), environment={"GITHUB_ACTIONS": "true", "GITHUB_STEP_SUMMARY": str(summary_file)})
         self.assertEqual(status, 1, output)
-        errors = [line for line in output.splitlines() if line.startswith("::")]
-        self.assertEqual(len(errors), 1, output)
-        self.assertTrue(errors[0].startswith("::error title=DCO::Commit "), errors[0])
-        self.assertIn("50%25 |", errors[0])  # "%" is escaped, so the text cannot change the annotation
+        commands = [line for line in output.splitlines() if line.lstrip().startswith("::")]  # splitlines() also ends a line at "\r", as the runner does
+        self.assertEqual(len(commands), 1, output)
+        self.assertTrue(commands[0].startswith("::error title=DCO::Commit "), commands[0])
+        self.assertIn("50%25 |", commands[0])  # "%" is escaped, so the text cannot change the annotation
+        self.assertIn("\\r::warning", commands[0])  # control characters are written out instead
+        for text in (output, summary_file.read_text()):
+            self.assertNotIn("\r", text)
+            self.assertNotIn("\x1b", text)
+        self.assertIn("Every DCO rule is met\\x1b[8m <eve@eve.test>", output)
         summary = summary_file.read_text()
         self.assertIn("## DCO check", summary)
-        self.assertIn("50% &#124; ::warning:: \\*Eve\\* &amp; \\[link\\](x)", summary)  # no column break, formatting or link
+        self.assertIn("50% &#124; ::warning:: \\*Eve\\* &amp; \\[link\\](x)\\\\r::warning", summary)  # no column break, formatting, link or line break
+
+    def test_control_characters_in_the_description_are_written_out(self) -> None:
+        # A description can hold control characters other than line breaks, such as the escape character that starts terminal colour codes.
+        self.repo.commit("feat: add a parser", AGENT, trailers=[co_author(AGENT, "Co-Authored-By")])
+        status, output = self.main("--event", str(self.event("Signed-off-by: Eve\x1b[8m Doe <eve@eve.test>\n")))
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("\x1b", output)
+        self.assertIn("signed off by Eve\\x1b[8m Doe <eve@eve.test>", output)
+        status, output = self.main("--event", str(self.event("Signed-off-by: Cla\x07ude <noreply@anthropic.com>\n")))
+        self.assertEqual(status, 1, output)
+        self.assertNotIn("\x07", output)
+        self.assertIn('signed off by the AI agent "Cla\\x07ude <noreply@anthropic.com>"', output)
 
 
 class AnnotationTests(unittest.TestCase):
     def test_line_breaks_and_percent_signs_are_escaped(self) -> None:
-        self.assertEqual(check_dco.annotation("a%b\nc\rd"), "::error title=DCO::a%25b%0Ac%0Dd")
+        self.assertEqual(check_dco.annotation("a%b\nc\rd"), "::error title=DCO::a%25b\\nc\\rd")
+
+    def test_control_characters_and_line_separators_are_written_out(self) -> None:
+        self.assertEqual(check_dco.visible("a\rb\x1b[31mc d\te\x85f\x00"), "a\\rb\\x1b[31mc\\u2028d\\te\\x85f\\x00")
+        self.assertEqual(check_dco.visible("José Ñúñez <jose@doe.test> | 50%"), "José Ñúñez <jose@doe.test> | 50%")
 
 
 class AgentsFileTests(unittest.TestCase):
