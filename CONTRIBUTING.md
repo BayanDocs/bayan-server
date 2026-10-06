@@ -40,7 +40,7 @@ Git then ends the message with a line such as `Signed-off-by: Jane Doe <jane@exa
 
 If you forgot, sign off the last commit with `git commit --amend --signoff --no-edit`, or every commit of your branch with `git rebase --signoff origin/main`, and then update your own branch with `git push --force-with-lease`. Never force-push a branch that someone else is working on.
 
-A commit made in GitHub's web editor has no sign-off unless you add one, and its author email is the one GitHub chooses (often your `…@users.noreply.github.com` address), so it is simplest to make changes with Git on your own computer.
+GitHub signs off commits made in its web interface for you: every BayanDocs repository requires it, so GitHub adds a `Signed-off-by:` line with the name and email address the commit is made under (often your `…@users.noreply.github.com` address).
 
 ### AI-assisted contributions
 
@@ -48,7 +48,7 @@ The DCO is a certification that only a person can make ([ADR-0003 §5](https://g
 
 - **AI agents never sign off**, neither in a commit nor in a pull request description.
 - **A commit written by an AI agent** has the agent as its author, using an identity listed in `.github/dco/agents.txt` (for example `Claude <noreply@anthropic.com>`), and names the agent in a `Co-authored-by:` line. Claude Code adds such a line, and a `Claude-Session:` link, by itself.
-- **The person who submits the pull request certifies the agent's work** (for now, the project owner). Before merging, they replace the placeholder in the template's "Developer Certificate of Origin" section with their own line, `Signed-off-by: Your Name <your email address>`, on a line of its own, and keep the same line at the end of the squash-merge commit's message.
+- **The person who submits the pull request certifies the agent's work** (for now, the project owner). Before merging, they replace the placeholder in the template's "Developer Certificate of Origin" section with their own line, `Signed-off-by: Your Name <your email address>`, on a line of its own. The squash-merge commit carries a sign-off too: when they merge in GitHub's web interface, GitHub ends the commit message with their sign-off by itself, and a merge made any other way (for example through GitHub's API) must end its message with the same line.
 - **If an agent commits under your own name** (for example Claude Code running on your computer with your Git settings), those commits are yours: review them, then sign them off yourself, for example with `git rebase --signoff origin/main`, before you push.
 
 ### What the DCO check checks
@@ -81,6 +81,7 @@ BayanDocs is free software, and contributions keep it that way ([LICENSING.md](h
 |---|---|
 | Everything not listed below | `AGPL-3.0-or-later` |
 | `integrations/`: the integration kits (API descriptions, SDKs, examples) | `Apache-2.0` |
+| `.github/` (CI workflows, the DCO check, templates), `.editorconfig` and `.gitattributes`: the contribution tooling shared by all five repositories | `MIT-0` |
 | `CODE_OF_CONDUCT.md`: the Contributor Covenant, by its authors | `CC-BY-4.0` |
 
 **The Apache-2.0 area (`integrations/`)** exists so that anyone can build BayanDocs clients and integrations under any license. Code and text there must never contain, copy from or depend on GPL or AGPL code, including the rest of BayanDocs: write it against the published specifications ([ADR-0003 §2](https://github.com/BayanDocs/docs/blob/main/adr/0003-licensing-and-contribution-model.md#2-rules-for-the-apache-20-areas)). The GPL and AGPL parts may depend on it.
