@@ -35,6 +35,8 @@ Run `cargo xtask verify` before every push. In order it runs `cargo fmt --check`
 - `cargo xtask sqlx-prepare --check` with `BAYAN_SQLX_POSTGRES_URL` set: the committed sqlx query metadata (`crates/bayan-db-*/.sqlx/`) must match the migrations and queries;
 - the container build, `scripts/container-smoke-test.sh` (read-only root filesystem, non-root user, health check, clean shutdown) and the grype vulnerability scan of the image and of `Cargo.lock`.
 
+Two more workflows run on every pull request, as in every BayanDocs repository: the DCO check (`.github/workflows/dco.yml`; the rules are in `CONTRIBUTING.md`) and `reuse lint` (`.github/workflows/reuse.yml`). Both run the pull request's own copy of their files, so a pull request can change the checks that judge it: treat every change under `.github/` as security-relevant in review.
+
 `scripts/dev-setup.sh` installs the pinned non-Rust tools (cargo-deny, grype) with checksum verification.
 
 ## Working in this repository
@@ -55,5 +57,7 @@ Exact `=x.y.z` requirements in `[workspace.dependencies]`; `Cargo.lock` committe
 The pinned toolchain (Rust 1.99) ignores `global-min-publish-age` and prints a warning about it on every Cargo command; Cargo enforces it from Rust 1.100. Until the workspace moves to 1.100, resolve the lockfile with the pinned nightly from the cloud environment, which already enforces it: `cargo +nightly-2026-10-02 update` (or `generate-lockfile`) reports "as of 24 hours ago" and skips younger versions. Then build and test with the pinned stable toolchain as usual.
 
 `deny.toml` bans crates that bundle C or C++ code. Today the only native code in the build is SQLite, compiled from source by `libsqlite3-sys` (ADR-0006 §3). ADR-0028 also allows AWS-LC as rustls's crypto provider: the work package that adds TLS unbans `aws-lc-sys`, lets it use `cc`, and adds the `webpki-roots` license exception. Any other native code needs an ADR amendment.
+
+REUSE for the `reuse lint` workflow is pinned in `.github/reuse/`: `requirements.txt` holds REUSE 6.2.0 and its dependencies, and `build-requirements.txt` the build backend poetry-core 2.5.0, all at exact versions with SHA-256 hashes. The workflow installs them with `pip --require-hashes`, as prebuilt wheels only, except REUSE itself, which is built from its hash-pinned source archive without build isolation, so nothing else is downloaded during the build. Both files are identical in all five BayanDocs repositories and match `req_reuse` and `req_poetry_core` in `docs/scripts/cloud-environment-setup.sh`; they change only in the monthly dependency session, in all five repositories together.
 
 In BayanDocs cloud sessions the tools are preinstalled at pinned versions by `docs/scripts/cloud-environment-setup.sh`; run `bayandocs-tools` to list them. If a tool is missing, install the version pinned there (never a newer one) and mention it in the pull request.

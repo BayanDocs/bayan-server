@@ -1,0 +1,46 @@
+# Line endings and binary files for every BayanDocs repository (work package X-001); the same file in all five.
+
+# Unix line endings (LF) in every text file, also in Windows checkouts: the scripts run under bash on every platform, and every compiler and tool the project uses reads LF.
+* text=auto eol=lf
+
+# Binary files: Git never changes their line endings and never shows them as text diffs. Document formats are listed even where Git would notice that they are binary, because some of them can look like text (a PDF or RTF file may be plain ASCII), and a test document must stay identical byte for byte.
+*.doc binary
+*.docm binary
+*.docx binary
+*.dot binary
+*.dotm binary
+*.dotx binary
+*.odt binary
+*.ott binary
+*.pdf binary
+*.pptx binary
+*.rtf binary
+*.xlsx binary
+
+# Fonts.
+*.otf binary
+*.ttc binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+
+# Images (SVG is text).
+*.bmp binary
+*.emf binary
+*.gif binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.png binary
+*.tif binary
+*.tiff binary
+*.webp binary
+*.wmf binary
+
+# Archives and compiled code.
+*.7z binary
+*.gz binary
+*.wasm binary
+*.xz binary
+*.zip binary
+*.zst binary

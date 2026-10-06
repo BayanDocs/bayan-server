@@ -1,0 +1,63 @@
+# Issue form for bug reports (work package X-001); the same in every BayanDocs repository. Syntax: https://docs.github.com/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms
+name: Bug report
+description: Something in BayanDocs does not work as it should, or something in its documentation is wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Two things first:
+
+        - **Security vulnerabilities do not belong here.** Report them privately: open this repository's **Security** tab and choose **Report a vulnerability**, as SECURITY.md explains.
+        - **Issues are public.** Never attach a private or confidential document. If a document is needed to show the problem, make a small one that contains nothing personal.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exactly what to do to see the problem, starting from a clean start.
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: For a difference from Microsoft Word, say what Word does with the same document, as you observed it.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The BayanDocs version, or the commit of main you built.
+      placeholder: for example 0.1.0, or 1a2b3c4
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and app
+      placeholder: for example Windows 11 with the desktop app, or macOS 15 with the web app in Firefox
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or logs
+      description: Paste the text rather than a screenshot where you can, and remove anything private first.
+      render: text
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues, and this problem is not reported yet.
+          required: true
+        - label: This is not a security vulnerability, and this report contains no private documents or personal data.
+          required: true

@@ -1,0 +1,48 @@
+# Issue form for tracking a work package (work package X-001); the same in every BayanDocs repository. Syntax: https://docs.github.com/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms
+# The brief in the docs repository stays the source of truth (docs/plan/06-agent-workflow.md); this issue only mirrors it on a board.
+name: Work package
+description: Track a work package from the BayanDocs plan. Its brief in the docs repository stays the source of truth.
+title: "WP-ID: title of the brief"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Work packages are planned in the [docs repository](https://github.com/BayanDocs/docs/blob/main/workpackages/README.md): each has a brief, and one session (an agent or a person) delivers it as one pull request. This issue only tracks it, so keep the scope, the acceptance criteria and the status in the brief and in the index, not here.
+  - type: input
+    id: wp-id
+    attributes:
+      label: Work package ID
+      placeholder: X-001
+    validations:
+      required: true
+  - type: input
+    id: brief
+    attributes:
+      label: Link to the brief
+      placeholder: https://github.com/BayanDocs/docs/blob/main/workpackages/phase-0/X-001-repository-baseline.md
+    validations:
+      required: true
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status, as in the work package index
+      options:
+        - Draft
+        - Ready
+        - In progress
+        - In review
+        - Done
+        - Blocked
+    validations:
+      required: true
+  - type: input
+    id: depends-on
+    attributes:
+      label: Depends on
+      description: Work package IDs that must be Done first, as in the brief.
+      placeholder: for example CORE-001, or none
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Pull requests that implement it, blockers, and questions for the owner.

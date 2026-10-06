@@ -1,0 +1,41 @@
+# Editor settings (https://editorconfig.org) for every BayanDocs repository (work package X-001); the same file in all five.
+# They match what the formatters enforce (rustfmt, Biome, clang-format), so an editor never fights them; the formatters' own settings win where both apply.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+# Two trailing spaces end a line in Markdown, so keep them.
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{rs,py,qml,sql}]
+indent_size = 4
+
+[*.{ts,tsx,js,mjs,cjs,json,jsonc,css,html,yml,yaml,sh,cmake,cpp,cc,h,hpp}]
+indent_size = 2
+
+[CMakeLists.txt]
+indent_size = 2
+
+# Texts copied verbatim from their publishers (license texts, the Code of Conduct, vendored minified code): never change them, not even their whitespace. Two sections, because a pattern that contains "/" only matches from the repository root.
+[{LICENSE,CODE_OF_CONDUCT.md,*.min.js}]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset
+
+[LICENSES/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset

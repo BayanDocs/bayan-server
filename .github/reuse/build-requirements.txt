@@ -1,0 +1,5 @@
+# The build backend that turns REUSE's source archive into an installable package (pip --no-build-isolation), for the REUSE workflow (.github/workflows/reuse.yml).
+# Exact version with its SHA-256 hash (ADR-0017): the same pin as req_poetry_core in the BayanDocs cloud environment (docs/scripts/cloud-environment-setup.sh). poetry-core 2.5.0, MIT, published 2026-09-19.
+# Changed only in the monthly dependency session, together with requirements.txt next to this file, in all five BayanDocs repositories.
+poetry-core==2.5.0 \
+    --hash=sha256:98ee465b66f7e14bb9fbe68fb5e00d0cff184f036993ec94610ae4b5612f3add

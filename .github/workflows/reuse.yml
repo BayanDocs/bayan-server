@@ -1,0 +1,42 @@
+# Checks that every file states its copyright and license in the machine-readable REUSE format (https://reuse.software), on every pull request and every push to main (work package X-001, ADR-0003 §5). REUSE.toml says which license applies to which files; CONTRIBUTING.md explains it.
+# REUSE is installed at exact versions with SHA-256 hashes from .github/reuse/, the same pins as the BayanDocs cloud environment (ADR-0017). Workflow rules as in dco.yml: SHA-pinned actions with the version in a comment, read-only permissions, no credentials kept after checkout, a timeout.
+name: REUSE
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: reuse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reuse:
+    name: REUSE lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the repository
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Into a virtual environment outside the checkout, so that REUSE does not check its own files. Wheels only, except REUSE itself: version 6.2.0 has no wheel for this Python, so it is built from its hash-pinned source archive with the hash-pinned build backend installed first (no other download during the build).
+      - name: Install REUSE (exact versions, SHA-256 hashes checked)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/reuse"
+          pip=("$RUNNER_TEMP/reuse/bin/pip" install --no-input --disable-pip-version-check --require-hashes --only-binary :all:)
+          "${pip[@]}" --requirement .github/reuse/build-requirements.txt
+          "${pip[@]}" --no-build-isolation --no-binary reuse --requirement .github/reuse/requirements.txt
+          "$RUNNER_TEMP/reuse/bin/reuse" --version | head -n 1
+
+      - name: Every file has copyright and license information (reuse lint)
+        run: '"$RUNNER_TEMP/reuse/bin/reuse" lint'

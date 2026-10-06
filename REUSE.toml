@@ -18,3 +18,10 @@ SPDX-FileCopyrightText = "2026 BayanDocs contributors"
 SPDX-License-Identifier = "Apache-2.0"
 
 # Third-party files keep their own license and copyright: record them here or in a `.license` file next to them.
+
+# The Code of Conduct is the Contributor Covenant 2.1, copied from https://www.contributor-covenant.org/version/2/1/code_of_conduct/code_of_conduct.md with only its contact placeholder filled in (work package X-001). The Contributor Covenant project released version 2.1 under CC BY 4.0.
+[[annotations]]
+path = "CODE_OF_CONDUCT.md"
+precedence = "override"
+SPDX-FileCopyrightText = "2014 Coraline Ada Ehmke and the Contributor Covenant contributors"
+SPDX-License-Identifier = "CC-BY-4.0"
