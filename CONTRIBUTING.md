@@ -81,6 +81,7 @@ BayanDocs is free software, and contributions keep it that way ([LICENSING.md](h
 |---|---|
 | Everything not listed below | `AGPL-3.0-or-later` |
 | `integrations/`: the integration kits (API descriptions, SDKs, examples) | `Apache-2.0` |
+| `.github/` (CI workflows, the DCO check, templates), `.editorconfig` and `.gitattributes`: the contribution tooling shared by all five repositories | `MIT-0` |
 | `CODE_OF_CONDUCT.md`: the Contributor Covenant, by its authors | `CC-BY-4.0` |
 
 **The Apache-2.0 area (`integrations/`)** exists so that anyone can build BayanDocs clients and integrations under any license. Code and text there must never contain, copy from or depend on GPL or AGPL code, including the rest of BayanDocs: write it against the published specifications ([ADR-0003 §2](https://github.com/BayanDocs/docs/blob/main/adr/0003-licensing-and-contribution-model.md#2-rules-for-the-apache-20-areas)). The GPL and AGPL parts may depend on it.

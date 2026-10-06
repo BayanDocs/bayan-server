@@ -10,6 +10,12 @@ path = "**"
 SPDX-FileCopyrightText = "2026 BayanDocs contributors"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
 
+# Shared contribution tooling, the same in every BayanDocs repository: CI workflows, the DCO check, the REUSE pins, the pull request and issue templates, CODEOWNERS (all in .github/), .editorconfig and .gitattributes. MIT-0, so anyone may reuse it and a fix can be copied between the repositories as it is (ADR-0003, amendment of 2026-10-06).
+[[annotations]]
+path = [".github/**", ".editorconfig", ".gitattributes"]
+SPDX-FileCopyrightText = "2026 BayanDocs contributors"
+SPDX-License-Identifier = "MIT-0"
+
 # Integration kits (machine-readable API descriptions, SDKs, examples): Apache-2.0, so companies can integrate without touching AGPL code.
 # They must never contain, copy from or depend on AGPL server code or GPL core code.
 [[annotations]]
