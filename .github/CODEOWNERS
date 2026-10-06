@@ -2,5 +2,6 @@
 # Work package X-001: the project owner is the default owner of everything.
 * @Gabrielc1925
 
-# Security-sensitive paths: parsers of untrusted input, cryptography, authentication, authorization, the FFI boundary and update mechanisms (docs/plan/07-quality-security-testing.md, section 3). A change to them needs a dedicated security review session in addition to the normal review. The work package that creates such a path adds it here.
-# None yet in this repository.
+# Security-sensitive paths: parsers of untrusted input, cryptography, authentication, authorization, the FFI boundary, update mechanisms, and the CI workflows and the checks they run (docs/plan/07-quality-security-testing.md, section 3). A change to them needs a dedicated security review session in addition to the normal review. The work package that creates such a path adds it here.
+# CI and the checks that judge pull requests: a workflow triggered by a pull request runs that pull request's own copy of these files, so a change here can weaken the checks that judge it.
+/.github/ @Gabrielc1925
