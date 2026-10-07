@@ -1,6 +1,6 @@
-# pip-audit and its dependencies, for the pip-audit job of the supply-chain workflow (.github/workflows/supply-chain.yml), which audits every hash-pinned requirements file of the repository (ADR-0017, Python tools in CI; work package X-003). Exact versions with SHA-256 hashes, installed with pip --require-hashes as wheels only. docs/scripts/dev-setup.sh --pip-audit installs the same pins on a Linux x86-64 machine.
+# pip-audit and its dependencies, for the pip-audit job of the supply-chain workflow (.github/workflows/supply-chain.yml), which audits every hash-pinned requirements file of the repository (ADR-0017, Python tools in CI; work package X-003). Exact versions with SHA-256 hashes, installed with pip --require-hashes as wheels only; typing-extensions is installed only on Python 3.12 and older, as its marker says. docs/scripts/dev-setup.sh --pip-audit installs the same pins on a Linux x86-64 machine.
 # Generated with docs/scripts/python-tool-hashes.py 'pip-audit==2.10.1' 2026-10-03T00:00:00Z: wheels for CPython 3.11-3.14 on x86-64 Ubuntu 24.04.
-# Publish dates: pip-audit 2.10.1 on 2026-06-10; the newest pin, filelock 4.0.9, on 2026-10-01. pip-audit is a standalone CI tool that is never shipped, so its dependencies' open-source licenses (MIT, BSD, Apache-2.0, MPL-2.0 for certifi, PSF-2.0 for defusedxml) are acceptable (ADR-0017, amendment "what the license allowlist covers").
+# Publish dates: pip-audit 2.10.1 on 2026-06-10; the newest pin, filelock 4.0.9, on 2026-10-01. pip-audit is a standalone CI tool that is never shipped, so its dependencies' open-source licenses (MIT, BSD, Apache-2.0, MPL-2.0 for certifi, PSF-2.0 for defusedxml and typing-extensions) are acceptable (ADR-0017, amendment "what the license allowlist covers").
 # Changed only in the monthly dependency session, in all five BayanDocs repositories. The supply-chain workflow audits this file too.
 boolean-py==5.0 \
     --hash=sha256:ef28a70bd43115208441b53a045d1549e2f0ec6e3d08a9d142cbc41c1938e8d9
@@ -71,5 +71,7 @@ tomli==2.4.1 \
     --hash=sha256:f3c6818a1a86dd6dca7ddcaaf76947d5ba31aecc28cb1b67009a5877c9a64f3f
 tomli-w==1.2.0 \
     --hash=sha256:188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90
+typing-extensions==4.16.0 ; python_full_version < '3.13' \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
