@@ -3,6 +3,7 @@
 //! - `verify`: the verification gate that CI runs and that must pass before every push.
 //! - `sqlx-prepare [--check]`: regenerates (or, with `--check`, verifies) the committed sqlx query metadata against scratch SQLite and PostgreSQL databases.
 //! - `test-postgres`: runs the PostgreSQL integration test against the server named by `BAYAN_TEST_POSTGRES_URL`.
+//! - `mls-spike-wasm [node | chromium]`, `mls-spike-bench <native | node | chromium>` and `mls-spike-wasm-size`: the WebAssembly tests, measurements and size report of the MLS spike (`spikes/mls`, work package SRV-002; see [`mls_spike`]).
 //!
 //! It uses only the standard library and runs the real tools with [`std::process::Command`].
 
@@ -17,7 +18,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const USAGE: &str = "usage: cargo xtask <verify | sqlx-prepare [--check] | test-postgres>";
+mod mls_spike;
+
+const USAGE: &str = "usage: cargo xtask <verify | sqlx-prepare [--check] | test-postgres | mls-spike-wasm [node | chromium] | mls-spike-bench <native | node | chromium> | mls-spike-wasm-size>";
 
 /// The backend crates whose queries sqlx checks at compile time. `sqlx-prepare` compiles each one on its own against its own database, so a single `DATABASE_URL` at a time is enough.
 const SQLITE: &str = "bayan-db-sqlite";
@@ -37,6 +40,13 @@ fn main() -> ExitCode {
         ["sqlx-prepare"] => sqlx_prepare(false),
         ["sqlx-prepare", "--check"] => sqlx_prepare(true),
         ["test-postgres"] => test_postgres(),
+        ["mls-spike-wasm", hosts @ ..] => {
+            workspace_root().and_then(|root| mls_spike::wasm_tests(&root, hosts))
+        }
+        ["mls-spike-bench", host @ ..] => {
+            workspace_root().and_then(|root| mls_spike::bench(&root, host))
+        }
+        ["mls-spike-wasm-size"] => workspace_root().and_then(|root| mls_spike::wasm_size(&root)),
         _ => Err(USAGE.to_owned()),
     };
     match result {
@@ -83,6 +93,8 @@ fn verify() -> Result {
         "dependency policy (cargo deny)",
         cargo(&["deny", "--locked", "--all-features", "check"]),
     )?;
+    // The MLS spike (spikes/mls) is a workspace of its own, checked the same way.
+    mls_spike::verify_steps(&workspace_root()?)?;
     supply_chain_checks()?;
     eprintln!("xtask: verify passed");
     Ok(())
