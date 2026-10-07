@@ -61,6 +61,8 @@ fn main() -> ExitCode {
 
 /// The verification gate, in order. Every step must pass.
 fn verify() -> Result {
+    // First, so that no code of a dependency these checks reject is compiled or run (build scripts, procedural macros, tests) before they fail; they build nothing themselves.
+    supply_chain_checks()?;
     step("format", cargo(&["fmt", "--all", "--check"]))?;
     step(
         "lint",
@@ -94,18 +96,17 @@ fn verify() -> Result {
         "dependency policy (cargo deny)",
         cargo(&["deny", "--locked", "--all-features", "check"]),
     )?;
-    supply_chain_checks()?;
     eprintln!("xtask: verify passed");
     Ok(())
 }
 
-/// The supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003, `supply_chain/`): every dependency is pinned exactly, and every package version that the change adds to `Cargo.lock` is at least 24 hours old. The second compares with the merge base of the branch the change goes into (`origin/<GITHUB_BASE_REF>` in a pull request on GitHub Actions, otherwise `origin/main`), so it needs the full Git history; it uses the network only when `Cargo.lock` changed. The update-bot check and pip-audit run in the supply-chain workflow (`.github/workflows/supply-chain.yml`).
+/// The supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003, `supply_chain/`): every dependency is pinned exactly, Cargo builds exactly what `Cargo.lock` lists, and every package version that the change adds to `Cargo.lock` is at least 24 hours old and has the checksum crates.io published. The age check compares with the merge base of the branch the change goes into (`origin/<GITHUB_BASE_REF>` in a pull request on GitHub Actions, otherwise `origin/main`), so it needs the full Git history; it asks crates.io only when `Cargo.lock` changed, and `cargo metadata` downloads the crate files that Cargo's cache lacks, without building anything. The update-bot check and pip-audit run in the supply-chain workflow (`.github/workflows/supply-chain.yml`).
 fn supply_chain_checks() -> Result {
     let root = workspace_root()?;
     eprintln!("xtask: check-exact-pins: every dependency is pinned exactly (ADR-0017 rule 5)");
     supply_chain::exact_pins::check(&root, &mut |line| report(line))?;
     eprintln!(
-        "xtask: check-lockfile-age: every package version added to Cargo.lock was published at least 24 hours before it was added (ADR-0017 rule 4)"
+        "xtask: check-lockfile-age: Cargo builds exactly what Cargo.lock lists, and every package version added to it was published at least 24 hours before it was added (ADR-0017 rule 4), with the checksum crates.io published"
     );
     supply_chain::lockfile_age::check(&root, None, &mut |line| report(line))
 }
