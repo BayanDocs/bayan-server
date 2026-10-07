@@ -38,5 +38,9 @@ openmls = { workspace = true, features = ["js"] }
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
 
+# The WebAssembly benchmark reports which JavaScript host it ran in.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+js-sys.workspace = true
+
 [lints]
 workspace = true

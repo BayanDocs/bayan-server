@@ -21,8 +21,8 @@ use crate::suite::Suite;
 use crate::update::{Update, UpdateError};
 use crate::wire::{self, WireError};
 
-/// How many past epochs a client keeps decryption keys for, so that application messages sent just before a commit can still be read after it.
-pub const MAX_PAST_EPOCHS: usize = 2;
+/// How many past epochs a client keeps decryption keys for, by default, so that an update sent just before a commit can still be read after it. One covers that race. OpenMLS keeps every member's leaf for each past epoch and stores it again after every message, so each one costs time per message and state in large groups (REPORT.md); [`Client::with_past_epochs`] chooses another number.
+pub const DEFAULT_PAST_EPOCHS: usize = 1;
 
 /// Why a client operation failed.
 #[derive(Debug, thiserror::Error)]
@@ -118,6 +118,9 @@ pub struct Client {
     signer: SignatureKeyPair,
     credential: CredentialWithKey,
     groups: BTreeMap<Vec<u8>, MlsGroup>,
+    /// The members and roles of each group's current epoch, read once per epoch rather than once per message.
+    views: BTreeMap<Vec<u8>, GroupView>,
+    past_epochs: usize,
 }
 
 /// The capabilities every client announces in its leaf: basic credentials and the roster extension (the group context requires both).
@@ -128,11 +131,11 @@ fn capabilities() -> Capabilities {
         .build()
 }
 
-fn join_config() -> MlsGroupJoinConfig {
+fn join_config(past_epochs: usize) -> MlsGroupJoinConfig {
     MlsGroupJoinConfig::builder()
         .wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
         .use_ratchet_tree_extension(false)
-        .max_past_epochs(MAX_PAST_EPOCHS)
+        .max_past_epochs(past_epochs)
         .build()
 }
 
@@ -143,6 +146,15 @@ impl Client {
     ///
     /// Returns an error if the key cannot be generated or stored.
     pub fn new(device: DeviceId) -> Result<Self, ClientError> {
+        Self::with_past_epochs(device, DEFAULT_PAST_EPOCHS)
+    }
+
+    /// A new device that keeps decryption keys for `past_epochs` past epochs in the groups it creates or joins.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the key cannot be generated or stored.
+    pub fn with_past_epochs(device: DeviceId, past_epochs: usize) -> Result<Self, ClientError> {
         let provider = OpenMlsRustCrypto::default();
         let signer =
             SignatureKeyPair::new(openmls_traits::types::SignatureScheme::ED25519).map_err(mls)?;
@@ -158,6 +170,8 @@ impl Client {
             signer,
             credential,
             groups: BTreeMap::new(),
+            views: BTreeMap::new(),
+            past_epochs,
         })
     }
 
@@ -167,19 +181,38 @@ impl Client {
         provider: OpenMlsRustCrypto,
         signer: SignatureKeyPair,
         groups: BTreeMap<Vec<u8>, MlsGroup>,
-    ) -> Self {
+    ) -> Result<Self, ClientError> {
         let credential = CredentialWithKey {
             credential: openmls::prelude::BasicCredential::new(device.to_credential_identity())
                 .into(),
             signature_key: signer.to_public_vec().into(),
         };
-        Self {
+        let mut client = Self {
             device,
             provider,
             signer,
             credential,
             groups,
+            views: BTreeMap::new(),
+            past_epochs: DEFAULT_PAST_EPOCHS,
+        };
+        let group_ids: Vec<Vec<u8>> = client.groups.keys().cloned().collect();
+        for group_id in group_ids {
+            client.refresh_view(&group_id)?;
         }
+        Ok(client)
+    }
+
+    /// Reads the members and roles of the group's current epoch into the cache. Called whenever the epoch changes.
+    fn refresh_view(&mut self, group_id: &[u8]) -> Result<(), ClientError> {
+        let group = self.group(group_id)?;
+        let view = wire::view_of(group.members(), Roster::from_extensions(group.extensions()))?;
+        self.views.insert(group_id.to_vec(), view);
+        Ok(())
+    }
+
+    fn cached_view(&self, group_id: &[u8]) -> Result<&GroupView, ClientError> {
+        self.views.get(group_id).ok_or(ClientError::UnknownGroup)
     }
 
     /// The device this client is.
@@ -229,7 +262,7 @@ impl Client {
             .ciphersuite(suite.ciphersuite())
             .wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
             .use_ratchet_tree_extension(false)
-            .max_past_epochs(MAX_PAST_EPOCHS)
+            .max_past_epochs(self.past_epochs)
             .capabilities(capabilities())
             .with_group_context_extensions(roster.group_context_extensions()?)
             .build();
@@ -243,6 +276,7 @@ impl Client {
         )
         .map_err(mls)?;
         self.groups.insert(group_id.clone(), group);
+        self.refresh_view(&group_id)?;
         Ok(group_id)
     }
 
@@ -261,11 +295,7 @@ impl Client {
     ///
     /// Returns an error for an unknown group or invalid state.
     pub fn view(&self, group_id: &[u8]) -> Result<GroupView, ClientError> {
-        let group = self.group(group_id)?;
-        Ok(wire::view_of(
-            group.members(),
-            Roster::from_extensions(group.extensions()),
-        )?)
+        self.cached_view(group_id).cloned()
     }
 
     /// The group's current epoch.
@@ -426,7 +456,8 @@ impl Client {
             .groups
             .get_mut(group_id)
             .ok_or(ClientError::UnknownGroup)?;
-        group.merge_pending_commit(provider).map_err(mls)
+        group.merge_pending_commit(provider).map_err(mls)?;
+        self.refresh_view(group_id)
     }
 
     /// Drops this client's pending commit after the server refused it.
@@ -463,9 +494,13 @@ impl Client {
             return Err(WireError::Malformed.into());
         };
         let tree = wire::decode_tree(ratchet_tree)?;
-        let staged =
-            StagedWelcome::new_from_welcome(&self.provider, &join_config(), welcome, Some(tree))
-                .map_err(mls)?;
+        let staged = StagedWelcome::new_from_welcome(
+            &self.provider,
+            &join_config(self.past_epochs),
+            welcome,
+            Some(tree),
+        )
+        .map_err(mls)?;
         let view = wire::view_of(
             staged.members(),
             Roster::from_group_context(staged.group_context()),
@@ -485,7 +520,26 @@ impl Client {
         let group = staged.into_group(&self.provider).map_err(mls)?;
         let group_id = group.group_id().as_slice().to_vec();
         self.groups.insert(group_id.clone(), group);
+        self.views.insert(group_id.clone(), view);
         Ok(group_id)
+    }
+
+    /// The bytes the client's storage provider holds (keys and the state of all its groups), counting keys and values: what a device must keep, for the measurements.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage lock is poisoned.
+    pub fn state_size(&self) -> Result<usize, ClientError> {
+        let values = self
+            .provider
+            .storage()
+            .values
+            .read()
+            .map_err(|_| ClientError::Mls("storage lock poisoned".to_owned()))?;
+        Ok(values
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum())
     }
 
     /// A copy of everything in the client's storage provider (keys and MLS state).
@@ -521,8 +575,7 @@ impl Client {
     ///
     /// Returns an error for an unknown group, a forbidden kind or an OpenMLS failure.
     pub fn send(&mut self, group_id: &[u8], update: &Update) -> Result<Vec<u8>, ClientError> {
-        let view = self.view(group_id)?;
-        policy::check_update(&view, &self.device, update.kind)?;
+        policy::check_update(self.cached_view(group_id)?, &self.device, update.kind)?;
         self.send_unchecked(group_id, update)
     }
 
@@ -566,7 +619,7 @@ impl Client {
         if message.group_id().as_slice() != group_id {
             return Err(ClientError::WrongGroup);
         }
-        let before = self.view(group_id)?;
+        let before = self.views.get(group_id).ok_or(ClientError::UnknownGroup)?;
         let provider = &self.provider;
         let group = self
             .groups
@@ -575,31 +628,44 @@ impl Client {
         let processed = group.process_message(provider, message).map_err(mls)?;
         let sender_credential = processed.credential().clone();
         let sender = wire::device_of(&sender_credential)?;
-        match processed.into_content() {
+        let received = match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(message) => {
                 let update = Update::from_bytes(&message.into_bytes())?;
-                policy::check_update(&before, &sender, update.kind)?;
-                Ok(Received::Update { sender, update })
+                policy::check_update(before, &sender, update.kind)?;
+                return Ok(Received::Update { sender, update });
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
                 let summary = wire::summarize_commit(&sender_credential, &staged, |index| {
                     group.member(index).cloned()
                 })?;
-                policy::check_commit(&before, &summary)?;
+                policy::check_commit(before, &summary)?;
                 let removed_self = staged.self_removed();
                 group.merge_staged_commit(provider, *staged).map_err(mls)?;
-                Ok(Received::Commit {
+                Received::Commit {
                     committer: sender,
                     epoch: group.epoch().as_u64(),
                     removed_self,
-                })
+                }
             }
             ProcessedMessageContent::ProposalMessage(_)
             | ProcessedMessageContent::ExternalJoinProposalMessage(_) => {
-                Err(ClientError::Unsupported("standalone proposals"))
+                return Err(ClientError::Unsupported("standalone proposals"));
             }
-            _ => Err(ClientError::Unsupported("this client's own messages")),
+            _ => return Err(ClientError::Unsupported("this client's own messages")),
+        };
+        // The commit was merged: the group is in a new epoch.
+        if matches!(
+            received,
+            Received::Commit {
+                removed_self: true,
+                ..
+            }
+        ) {
+            self.views.remove(group_id);
+        } else {
+            self.refresh_view(group_id)?;
         }
+        Ok(received)
     }
 
     /// Exports a secret from the group's current epoch (RFC 9420 §8.5), for application keys bound to the epoch.

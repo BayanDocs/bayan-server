@@ -29,6 +29,8 @@ web-time = "=1.1.0"
 # WebAssembly glue, and the test harness that runs the same tests in Node.js and in a browser.
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-test = "=0.3.79"
+# JavaScript's global objects, for the WebAssembly benchmark's report of its host (already in the build through wasm-bindgen-test and web-time).
+js-sys = "=0.3.106"
 # The RustCrypto provider seeds its random number generator through getrandom 0.2, which needs its `js` feature on wasm32-unknown-unknown (Web Crypto's getRandomValues).
 getrandom_02 = { package = "getrandom", version = "=0.2.17" }
 # The fallback named in ADR-0016 (time-boxed check only): mls-rs with its RustCrypto provider, without its SQLite, OpenSSL or AWS-LC options.

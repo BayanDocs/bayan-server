@@ -156,7 +156,7 @@ pub fn import(bytes: &[u8]) -> Result<Client, PersistError> {
         }
         groups.insert(group_id, group);
     }
-    Ok(Client::from_parts(device, provider, signer, groups))
+    Client::from_parts(device, provider, signer, groups).map_err(|_| PersistError::Malformed)
 }
 
 fn push_len_u8(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), PersistError> {

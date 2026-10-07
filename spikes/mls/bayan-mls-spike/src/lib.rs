@@ -16,9 +16,12 @@
 //! - [`recreate`]: moving a document to a new group (ciphersuite migration).
 //! - [`persist`]: saving and loading a client's MLS state.
 //! - [`sim`]: a whole deployment in one process, for tests, benchmarks and the WebAssembly runs.
+//! - [`mod@bench`]: the measurements of the report.
+//! - [`wasm_api`]: the functions a web client would call, for measuring the WebAssembly size.
 
 #![forbid(unsafe_code)]
 
+pub mod bench;
 pub mod client;
 pub mod directory;
 pub mod identity;
@@ -31,4 +34,5 @@ pub mod snapshot;
 pub mod suite;
 pub mod update;
 pub mod validator;
+pub mod wasm_api;
 pub mod wire;
