@@ -1,0 +1,86 @@
+# Spike SRV-002: MLS for CRDT updates (ADR-0016). See REPORT.md.
+#
+# A separate Cargo workspace with its own Cargo.lock, on purpose. Cargo's lockfile includes every optional dependency of every package, so in the server's workspace OpenMLS's optional SQLite storage would pin libsqlite3-sys (one version per build, because it links a native library) to an older release and silently change the SQLite inside the server. Kept apart, the spike cannot change anything the server builds. `cargo xtask verify` checks this workspace too (format, Clippy, tests, documentation, cargo deny with the server's deny.toml), and `cargo xtask mls-spike-wasm` runs its tests in Node.js and Chromium.
+#
+# The rust-toolchain.toml and .cargo/config.toml of the repository root apply here as well (Cargo and rustup search the parent directories), including the 24-hour minimum publish age.
+[workspace]
+resolver = "3"
+members = ["bayan-mls-spike", "bayan-mls-rs-check"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/BayanDocs/bayan-server"
+publish = false
+
+# ADR-0017: direct dependencies are pinned exactly (`=x.y.z`), every version was at least 24 hours old when pinned, and each one is justified in the pull request that added it. This lockfile was resolved with `cargo +nightly-2026-10-02`, whose Cargo enforces the minimum publish age.
+[workspace.dependencies]
+# OpenMLS (ADR-0016) with its RustCrypto provider, its basic credentials and its trait crate: pure Rust; the provider uses RustCrypto and hpke-rs.
+openmls = "=0.9.0"
+openmls_basic_credential = "=0.6.0"
+openmls_rust_crypto = "=0.6.0"
+openmls_traits = "=0.6.0"
+# Error types, as in the server.
+thiserror = "=2.0.21"
+# A clock that works natively and in WebAssembly (performance.now()); already in the build through OpenMLS's `js` feature.
+web-time = "=1.1.0"
+# WebAssembly glue, and the test harness that runs the same tests in Node.js and in a browser.
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-test = "=0.3.79"
+# The RustCrypto provider seeds its random number generator through getrandom 0.2, which needs its `js` feature on wasm32-unknown-unknown (Web Crypto's getRandomValues).
+getrandom_02 = { package = "getrandom", version = "=0.2.17" }
+# The fallback named in ADR-0016 (time-boxed check only): mls-rs with its RustCrypto provider, without its SQLite, OpenSSL or AWS-LC options.
+mls-rs = { version = "=0.56.0", default-features = false, features = ["std", "private_message", "external_client", "tree_index"] }
+mls-rs-crypto-rustcrypto = { version = "=0.22.1", default-features = false, features = ["std"] }
+
+# The same lint rules as the server's workspace (the root Cargo.toml); keep the two lists equal. Warnings are errors in `cargo xtask verify`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# A curated pedantic subset.
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+checked_conversions = "warn"
+doc_markdown = "warn"
+explicit_iter_loop = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+unnested_or_patterns = "warn"
+wildcard_imports = "warn"
+# Restrictions that matter for a server.
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+
+# Unoptimized cryptography makes the tests take minutes; optimize the dependencies (not the spike's own code) in debug and test builds.
+[profile.dev.package."*"]
+opt-level = 2
+
+# Benchmarks and the WebAssembly size measurement use the release profile, as the server does.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
+
+# The smallest WebAssembly build, for the size measurement only (`cargo xtask mls-spike-wasm-size`).
+[profile.release-size]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
