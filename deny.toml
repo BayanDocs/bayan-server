@@ -1,4 +1,4 @@
-# cargo-deny configuration (ADR-0017): advisories, licenses, banned crates and allowed sources. `cargo xtask verify` runs `cargo deny --locked --all-features check`. X-003 completes the supply-chain checks.
+# cargo-deny configuration (ADR-0017): advisories, licenses, banned crates and allowed sources. `cargo xtask verify` runs `cargo deny --locked --all-features check`, on every pull request and every night. The rules cargo-deny cannot check (exact pins and the 24-hour minimum age of new package versions) are `cargo xtask check-exact-pins` and `cargo xtask check-lockfile-age` (work package X-003).
 
 [graph]
 all-features = true
@@ -7,6 +7,9 @@ all-features = true
 # RustSec advisories: vulnerable and unmaintained crates, and yanked versions, fail the check. Any exception must be listed here with a reason and a review date.
 version = 2
 yanked = "deny"
+# Advisories that a crate is unmaintained or unsound count for every crate in the build, direct or not. For unmaintained crates that is cargo-deny's default; for unsound ones the default would count only the workspace's direct dependencies.
+unmaintained = "all"
+unsound = "all"
 ignore = []
 
 [licenses]
@@ -56,8 +59,9 @@ deny = [
 ]
 
 [sources]
-# Only crates.io; no Git or alternative registries without an explicit entry here (ADR-0017).
+# Only crates.io; no Git or alternative registries without an explicit entry here (ADR-0017). A Git dependency needs its repository listed in `allow-git`, with a reason, and must name a fixed `tag` or `rev` (a commit), never a branch; `cargo xtask check-exact-pins` checks the same in the manifests. Cargo.lock records the exact commit either way.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = []
+required-git-spec = "tag"
