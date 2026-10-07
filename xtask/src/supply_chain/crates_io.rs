@@ -1,6 +1,6 @@
-//! When a crate version was published on crates.io.
+//! When a crate version was published on crates.io, and the checksum of the crate file it published.
 //!
-//! The answer comes from the crates.io sparse index (`https://index.crates.io/`), whose line for each version carries the publish time as `pubtime`; that is the source Cargo itself reads, served by a content delivery network, so it is cheap to ask. If a line has no `pubtime`, the crates.io API (`https://crates.io/api/v1/crates/<name>/<version>`) answers with the version's `created_at`; the API allows at most one request per second from tools like this one (<https://crates.io/data-access>), so its requests are spaced out. Every request names this tool and its repository in a descriptive User-Agent, as crates.io asks, and each crate's index file is fetched once per run.
+//! The answer comes from the crates.io sparse index (`https://index.crates.io/`), whose line for each version carries the publish time as `pubtime` and the SHA-256 of the crate file as `cksum`; that is the source Cargo itself reads, served by a content delivery network, so it is cheap to ask. If a line has no `pubtime`, the crates.io API (`https://crates.io/api/v1/crates/<name>/<version>`) answers with the version's `created_at`; the API allows at most one request per second from tools like this one (<https://crates.io/data-access>), so its requests are spaced out. Every request names this tool and its repository in a descriptive User-Agent, as crates.io asks, and each crate's index file is fetched once per run.
 //!
 //! The requests are made by `curl`, which every supported platform has (Windows 10 and later include it), so that xtask needs no HTTP or TLS library of its own.
 
@@ -13,7 +13,7 @@ use super::{json, time};
 /// The longest crate name crates.io accepts.
 const MAX_NAME_LENGTH: usize = 64;
 
-/// How long one request may take, in seconds, including retries.
+/// How long one attempt of a request may take, in seconds; curl tries up to four times.
 const TIMEOUT_SECONDS: &str = "60";
 
 /// Fetches the body of an HTTPS address.
@@ -58,11 +58,28 @@ impl Fetch for Curl {
     }
 }
 
-/// Publish times of crate versions, looked up on crates.io.
+/// What crates.io records about one published version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Published {
+    /// When it was published, in seconds since 1970.
+    pub time: i64,
+    /// The SHA-256 of its crate file, in lowercase hexadecimal, as `Cargo.lock` records it.
+    pub checksum: String,
+}
+
+/// A version as a crate's index file lists it.
+struct Listed {
+    version: String,
+    /// The publish time, if the line has one.
+    published: Option<i64>,
+    checksum: String,
+}
+
+/// Publish times and checksums of crate versions, looked up on crates.io.
 pub struct CratesIo<'a> {
     fetch: &'a mut dyn Fetch,
-    /// The versions of every crate looked up so far, with the publish time that the index records (if any).
-    index: BTreeMap<String, Vec<(String, Option<i64>)>>,
+    /// The versions of every crate looked up so far.
+    index: BTreeMap<String, Vec<Listed>>,
     /// The least time between two requests to the API.
     api_interval: Duration,
     last_api_request: Option<Instant>,
@@ -79,8 +96,8 @@ impl<'a> CratesIo<'a> {
         }
     }
 
-    /// When version `version` of the crate `name` was published, in seconds since 1970.
-    pub fn published(&mut self, name: &str, version: &str) -> Result<i64, String> {
+    /// When version `version` of the crate `name` was published, and the checksum of its crate file.
+    pub fn published(&mut self, name: &str, version: &str) -> Result<Published, String> {
         check_name(name)?;
         check_version(version)?;
         let key = name.to_ascii_lowercase();
@@ -94,12 +111,15 @@ impl<'a> CratesIo<'a> {
         let found = self.index.get(&key).and_then(|versions| {
             versions
                 .iter()
-                .find(|(listed, _)| listed == version)
-                .map(|(_, published)| *published)
+                .find(|listed| listed.version == version)
+                .map(|listed| (listed.published, listed.checksum.clone()))
         });
         match found {
-            Some(Some(published)) => Ok(published),
-            Some(None) => self.created_at(name, version),
+            Some((Some(time), checksum)) => Ok(Published { time, checksum }),
+            Some((None, checksum)) => Ok(Published {
+                time: self.created_at(name, version)?,
+                checksum,
+            }),
             None => Err(format!(
                 "{name} {version} is not in the crates.io index, which lists every version ever published (yanked ones too)"
             )),
@@ -162,8 +182,8 @@ fn index_path(name: &str) -> String {
     }
 }
 
-/// The versions in a crate's index file, one JSON object per line, each with its `pubtime` if the line has one.
-fn read_index(name: &str, body: &str) -> Result<Vec<(String, Option<i64>)>, String> {
+/// The versions in a crate's index file, one JSON object per line, each with its checksum and its `pubtime` if the line has one.
+fn read_index(name: &str, body: &str) -> Result<Vec<Listed>, String> {
     let mut versions = Vec::new();
     for (index, line) in body.lines().enumerate() {
         if line.trim().is_empty() {
@@ -188,7 +208,20 @@ fn read_index(name: &str, body: &str) -> Result<Vec<(String, Option<i64>)>, Stri
             .map(time::parse)
             .transpose()
             .map_err(|problem| format!("line {}: {problem}", index + 1))?;
-        versions.push((version.to_owned(), published));
+        let checksum = entry
+            .string("cksum")
+            .filter(|checksum| {
+                checksum.len() == 64
+                    && checksum
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            .ok_or_else(|| format!("line {} has no SHA-256 checksum", index + 1))?;
+        versions.push(Listed {
+            version: version.to_owned(),
+            published,
+            checksum: checksum.to_owned(),
+        });
     }
     if versions.is_empty() {
         return Err("the index file lists no versions".to_owned());
@@ -274,16 +307,18 @@ mod tests {
     fn reads_publish_times_from_the_index_and_fetches_each_crate_once() {
         let mut recorded = Recorded::crates_io();
         let mut crates_io = CratesIo::new(&mut recorded, Duration::ZERO);
+        let hyper = crates_io.published("hyper", "1.12.0").unwrap();
+        assert_eq!(Ok(hyper.time), time::parse("2026-10-06T15:57:18Z"));
         assert_eq!(
-            crates_io.published("hyper", "1.12.0"),
-            time::parse("2026-10-06T15:57:18Z")
+            hyper.checksum,
+            "2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c"
         );
         assert_eq!(
-            crates_io.published("Hyper", "1.11.1"),
+            crates_io.published("Hyper", "1.11.1").map(|published| published.time),
             time::parse("2026-08-28T12:22:30Z")
         );
         assert_eq!(
-            crates_io.published("zerocopy", "0.8.60"),
+            crates_io.published("zerocopy", "0.8.60").map(|published| published.time),
             time::parse("2026-10-05T23:02:10Z")
         );
         assert_eq!(
@@ -301,11 +336,11 @@ mod tests {
         let mut crates_io = CratesIo::new(&mut recorded, Duration::ZERO);
         // The recorded line of serde 1.0.228 has its pubtime removed; the API's `version.created_at` takes its place, not the `created_at` of the publisher's account that the answer also contains.
         assert_eq!(
-            crates_io.published("serde", "1.0.228"),
-            time::parse("2025-09-27T16:51:35Z")
+            crates_io.published("serde", "1.0.228").map(|published| published.time),
+            time::parse("2025-09-27T16:51:35.265429Z")
         );
         assert_eq!(
-            crates_io.published("serde", "1.0.229"),
+            crates_io.published("serde", "1.0.229").map(|published| published.time),
             time::parse("2026-07-18T23:05:13Z")
         );
         assert_eq!(
@@ -322,7 +357,7 @@ mod tests {
         let mut recorded = Recorded::with(&[
             (
                 "https://index.crates.io/1/a",
-                "{\"name\":\"a\",\"vers\":\"1.0.0\"}\n{\"name\":\"a\",\"vers\":\"2.0.0\"}\n",
+                "{\"name\":\"a\",\"vers\":\"1.0.0\",\"cksum\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n{\"name\":\"a\",\"vers\":\"2.0.0\",\"cksum\":\"2222222222222222222222222222222222222222222222222222222222222222\"}\n",
             ),
             (
                 "https://crates.io/api/v1/crates/a/1.0.0",
@@ -336,11 +371,11 @@ mod tests {
         let mut crates_io = CratesIo::new(&mut recorded, Duration::from_millis(200));
         let started = Instant::now();
         assert_eq!(
-            crates_io.published("a", "1.0.0"),
+            crates_io.published("a", "1.0.0").map(|published| published.time),
             time::parse("2020-01-01T00:00:00Z")
         );
         assert_eq!(
-            crates_io.published("a", "2.0.0"),
+            crates_io.published("a", "2.0.0").map(|published| published.time),
             time::parse("2021-01-01T00:00:00Z")
         );
         assert!(started.elapsed() >= Duration::from_millis(200));
@@ -386,6 +421,14 @@ mod tests {
         assert!(read_index("hyper", "<html>not json</html>").is_err());
         assert!(read_index("hyper", "{\"name\":\"other\",\"vers\":\"1.0.0\"}").is_err());
         assert!(read_index("hyper", "{\"name\":\"hyper\"}").is_err());
+        assert!(read_index("hyper", "{\"name\":\"hyper\",\"vers\":\"1.0.0\"}").is_err());
+        assert!(
+            read_index(
+                "hyper",
+                "{\"name\":\"hyper\",\"vers\":\"1.0.0\",\"cksum\":\"XYZ\"}"
+            )
+            .is_err()
+        );
         assert!(
             read_index(
                 "hyper",

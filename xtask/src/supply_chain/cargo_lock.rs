@@ -1,6 +1,12 @@
 //! Reads the list of packages from `Cargo.lock`.
 //!
-//! Cargo writes the file itself, in a fixed layout: `[[package]]` tables of `key = "string"` lines, with `dependencies` as a list over several lines. This reader understands exactly that and reports anything else as an error, so that a hand-edited file cannot hide a package from the checks.
+//! Cargo writes the file in one fixed layout but reads it as TOML, which can write the same data in many other ways (`[[ package ]]`, `[["package"]]`, `package = [{ … }]`, quoted keys, other spacing). A reader that understood only the usual layout could be handed a file that Cargo reads differently, so this one accepts exactly the layout Cargo writes and reports anything else as an error:
+//!
+//! - comment lines at the top, then `version = 3` or `version = 4`;
+//! - `[[package]]` tables, each with `name`, `version` and, for packages that do not belong to the workspace, `source` and `checksum`, as `key = "text"` lines, and with `dependencies = [`, one ` "…",` line per dependency and `]`;
+//! - blank lines between them.
+//!
+//! The age check also compares what this reader finds with the packages Cargo itself resolves (`lockfile_age.rs`), so that a difference this reader missed would still fail the check.
 
 /// One `[[package]]` entry of `Cargo.lock`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -25,64 +31,83 @@ impl Package {
 /// The packages of a `Cargo.lock`, in the file's order.
 pub fn parse(text: &str) -> Result<Vec<Package>, String> {
     let mut packages = Vec::new();
-    // The `[[package]]` being read, or `None` while reading another table (or the lines before the first).
+    // The `[[package]]` being read, or `None` before the first.
     let mut current: Option<Fields> = None;
     let mut in_list = false;
+    let mut format_version = false;
     for (index, line) in text.lines().enumerate() {
         let number = index + 1;
-        let line = line.trim();
+        let unexpected = || {
+            format!(
+                "Cargo.lock line {number}: `{line}` is not part of the layout Cargo writes, so this check cannot be sure how Cargo reads it; regenerate the file with Cargo"
+            )
+        };
+        if !line.bytes().all(|byte| (b' '..=b'~').contains(&byte)) {
+            return Err(format!(
+                "Cargo.lock line {number}: a tab or a character outside printable ASCII"
+            ));
+        }
         if in_list {
             if line == "]" {
                 in_list = false;
-            } else if !(line.starts_with('"') && line.ends_with("\",")) {
-                return Err(format!(
-                    "Cargo.lock line {number}: unexpected `{line}` in a list"
-                ));
+            } else if line
+                .strip_prefix(' ')
+                .and_then(|item| item.strip_suffix(','))
+                .and_then(string)
+                .is_none()
+            {
+                return Err(unexpected());
             }
             continue;
         }
-        if line.is_empty() || line.starts_with('#') {
+        if line.is_empty() {
             continue;
         }
-        if line.starts_with('[') {
+        if line.starts_with('#') {
+            // Cargo's own comment comes first; a comment anywhere else is not Cargo's.
+            if format_version || current.is_some() {
+                return Err(unexpected());
+            }
+            continue;
+        }
+        if line == "[[package]]" {
+            if !format_version {
+                return Err(format!(
+                    "Cargo.lock line {number}: a [[package]] before the `version = …` line"
+                ));
+            }
             if let Some(fields) = current.take() {
                 packages.push(fields.finish()?);
             }
-            if line == "[[package]]" {
-                current = Some(Fields::new(number));
-            } else if !(line.ends_with(']') && line.len() > 2) {
-                return Err(format!("Cargo.lock line {number}: unexpected `{line}`"));
-            }
+            current = Some(Fields::new(number));
             continue;
         }
-        let (key, value) = line.split_once(" = ").ok_or_else(|| {
-            format!("Cargo.lock line {number}: expected `key = value`, found `{line}`")
-        })?;
-        if value == "[" {
-            in_list = true;
-            continue;
-        }
+        let (key, value) = line.split_once(" = ").ok_or_else(unexpected)?;
         let Some(fields) = current.as_mut() else {
-            // The lines before the first table (such as `version = 4`) and other tables do not describe packages.
-            continue;
+            // Before the first [[package]], only the format version.
+            if key == "version" && !format_version && matches!(value, "3" | "4") {
+                format_version = true;
+                continue;
+            }
+            return Err(unexpected());
         };
         match key {
-            "dependencies" if value == "[]" => {}
-            "name" | "version" | "source" | "checksum" | "replace" => {
-                let value = string(value).ok_or_else(|| {
-                    format!("Cargo.lock line {number}: `{key}` is not a plain string")
-                })?;
+            "dependencies" if value == "[" && !fields.dependencies => {
+                fields.dependencies = true;
+                in_list = true;
+            }
+            "name" | "version" | "source" | "checksum" => {
+                let value = string(value).ok_or_else(unexpected)?;
                 fields.set(key, value, number)?;
             }
-            _ => {
-                return Err(format!(
-                    "Cargo.lock line {number}: unexpected key `{key}` in a [[package]]"
-                ));
-            }
+            _ => return Err(unexpected()),
         }
     }
     if in_list {
         return Err("Cargo.lock ends inside a list".to_owned());
+    }
+    if !format_version {
+        return Err("Cargo.lock has no `version = 3` or `version = 4` line".to_owned());
     }
     if let Some(fields) = current {
         packages.push(fields.finish()?);
@@ -90,22 +115,13 @@ pub fn parse(text: &str) -> Result<Vec<Package>, String> {
     Ok(packages)
 }
 
-/// The contents of a basic string as Cargo writes it (`"…"`, with `\\` and `\"` as the only escapes), or `None` for anything else.
+/// The contents of a string as Cargo writes it (`"…"`, printable ASCII without quotes or backslashes), or `None` for anything else.
 fn string(value: &str) -> Option<String> {
     let inner = value.strip_prefix('"')?.strip_suffix('"')?;
-    let mut text = String::with_capacity(inner.len());
-    let mut characters = inner.chars();
-    while let Some(character) = characters.next() {
-        match character {
-            '\\' => match characters.next()? {
-                escaped @ ('\\' | '"') => text.push(escaped),
-                _ => return None,
-            },
-            '"' => return None,
-            _ => text.push(character),
-        }
+    if inner.contains(['"', '\\']) {
+        return None;
     }
-    Some(text)
+    Some(inner.to_owned())
 }
 
 /// The fields of one `[[package]]` while it is read.
@@ -115,6 +131,7 @@ struct Fields {
     version: Option<String>,
     source: Option<String>,
     checksum: Option<String>,
+    dependencies: bool,
 }
 
 impl Fields {
@@ -125,6 +142,7 @@ impl Fields {
             version: None,
             source: None,
             checksum: None,
+            dependencies: false,
         }
     }
 
@@ -133,9 +151,7 @@ impl Fields {
             "name" => &mut self.name,
             "version" => &mut self.version,
             "source" => &mut self.source,
-            "checksum" => &mut self.checksum,
-            // `replace` (written by old versions of Cargo for `[replace]`) points to another entry, which is checked itself.
-            _ => return Ok(()),
+            _ => &mut self.checksum,
         };
         if slot.replace(value).is_some() {
             return Err(format!(
@@ -182,7 +198,6 @@ name = "hyper"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c"
-dependencies = []
 
 [[package]]
 name = "gitdep"
@@ -218,27 +233,44 @@ source = "git+https://example.org/gitdep?rev=eb23095592359c454a586d16d08b2bd3af4
 
     #[test]
     fn rejects_what_cargo_does_not_write() {
+        let package = "version = 4\n\n[[package]]\n";
         for text in [
-            "[[package]]\nname = \"a\"\n",
-            "[[package]]\nversion = \"1.0.0\"\n",
-            "[[package]]\nname = \"a\"\nname = \"b\"\nversion = \"1.0.0\"\n",
-            "[[package]]\nname = \"a\"\nversion = \"1.0.0\"\nfeatures = \"x\"\n",
-            "[[package]]\nname = 'a'\nversion = \"1.0.0\"\n",
-            "[[package]]\nname = \"a\\u0062\"\nversion = \"1.0.0\"\n",
-            "[[package]]\nname=\"a\"\nversion = \"1.0.0\"\n",
-            "[[package]]\nname = \"a\"\nversion = \"1.0.0\"\ndependencies = [\n \"b\",\n",
-            "[[package]]\nname = \"a\"\nversion = \"1.0.0\"\ndependencies = [\n b,\n]\n",
-            "[package\nname = \"a\"\n",
+            format!("{package}name = \"a\"\n"),
+            format!("{package}version = \"1.0.0\"\n"),
+            format!("{package}name = \"a\"\nname = \"b\"\nversion = \"1.0.0\"\n"),
+            format!("{package}name = \"a\"\nversion = \"1.0.0\"\nfeatures = \"x\"\n"),
+            format!("{package}name = 'a'\nversion = \"1.0.0\"\n"),
+            format!("{package}name = \"a\\u0062\"\nversion = \"1.0.0\"\n"),
+            format!("{package}name=\"a\"\nversion = \"1.0.0\"\n"),
+            format!("{package} name = \"a\"\nversion = \"1.0.0\"\n"),
+            format!("{package}\"name\" = \"a\"\nversion = \"1.0.0\"\n"),
+            format!("{package}name = \"a\" # a comment\nversion = \"1.0.0\"\n"),
+            format!("{package}# a comment\nname = \"a\"\nversion = \"1.0.0\"\n"),
+            format!("{package}name = \"a\"\nversion = \"1.0.0\"\nreplace = \"b 1.0.0\"\n"),
+            format!("{package}name = \"a\"\nversion = \"1.0.0\"\ndependencies = [\n \"b\",\n"),
+            format!("{package}name = \"a\"\nversion = \"1.0.0\"\ndependencies = [\n b,\n]\n"),
+            format!("{package}name = \"a\"\nversion = \"1.0.0\"\ndependencies = [\"b\"]\n"),
+            format!("{package}name = \"a\"\nversion = \"1.0.0\"\tx\n"),
+            "[[package]]\nname = \"a\"\nversion = \"1.0.0\"\n".to_owned(),
+            "version = 5\n".to_owned(),
+            String::new(),
         ] {
-            assert!(parse(text).is_err(), "{text:?}");
+            assert!(parse(&text).is_err(), "{text:?}");
         }
     }
 
+    /// TOML spellings that Cargo reads like `[[package]]` tables (it compares lockfiles by meaning, not text, so `--locked` accepts them), which an earlier version of this reader skipped as other tables, hiding the package from the age check.
     #[test]
-    fn skips_other_tables() {
-        let text = "version = 4\n\n[metadata]\n\"checksum a 1.0.0\" = \"x\"\n\n[[package]]\nname = \"a\"\nversion = \"1.0.0\"\n";
-        let packages = parse(text).unwrap();
-        assert_eq!(packages.len(), 1);
-        assert_eq!(packages[0].label(), "a 1.0.0");
+    fn rejects_other_spellings_of_a_package() {
+        let hidden = "name = \"hyper\"\nversion = \"1.12.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c\"\n";
+        for text in [
+            format!("version = 4\n\n[[ package ]]\n{hidden}"),
+            format!("version = 4\n\n[[\"package\"]]\n{hidden}"),
+            "version = 4\npackage = [{ name = \"hyper\", version = \"1.12.0\" }]\n".to_owned(),
+            format!("version = 4\n\n[metadata]\n\"checksum a 1.0.0\" = \"x\"\n\n[[package]]\n{hidden}"),
+            format!("version = 4\n\n[[patch.unused]]\n{hidden}"),
+        ] {
+            assert!(parse(&text).is_err(), "{text:?}");
+        }
     }
 }

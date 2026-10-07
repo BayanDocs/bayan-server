@@ -8,8 +8,8 @@
 //! Exact pins make the versions in `Cargo.lock` the only ones that can be built, so `cargo update` cannot move a dependency without a reviewed change to the manifests.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
+use super::cargo;
 use super::json::{self, Value};
 use super::manifest::{self, Dependency};
 
@@ -19,7 +19,7 @@ pub fn check(root: &Path, report: &mut dyn FnMut(&str)) -> Result<(), String> {
     let text = std::fs::read_to_string(&manifest_path)
         .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?;
     let declared = manifest::workspace_dependencies(&text)?;
-    let metadata = json::parse(&cargo_metadata(root)?)?;
+    let metadata = json::parse(&cargo::metadata(root, &["--no-deps"])?)?;
     let members = Members::from_metadata(&metadata)?;
     let mut problems = Vec::new();
     for dependency in &declared {
@@ -129,10 +129,14 @@ fn check_declared(dependency: &Dependency, root: &Path, members: &Members) -> Re
                 "a Git dependency must name a fixed `rev` or `tag`, not a branch".to_owned(),
             );
         }
-        if dependency.field("rev").is_none() && dependency.field("tag").is_none() {
-            return Err("a Git dependency must name a fixed `rev` or `tag`".to_owned());
-        }
-        return Ok(());
+        return match (dependency.field("rev"), dependency.field("tag")) {
+            (Some(rev), None) if commit_id(rev) => Ok(()),
+            (Some(rev), None) => Err(format!(
+                "`rev = \"{rev}\"` is not a full commit hash, so it can name a branch; write the commit's 40-character hash"
+            )),
+            (None, Some(tag)) if !tag.is_empty() => Ok(()),
+            _ => Err("a Git dependency must name one fixed `rev` (a full commit hash) or `tag`".to_owned()),
+        };
     }
     if dependency.field("version").is_none() {
         return Err("it has no version; write an exact one, such as `\"=1.2.3\"`".to_owned());
@@ -164,21 +168,35 @@ fn check_resolved(dependency: &Value, members: &Members) -> Result<(), String> {
             }
             exact(dependency.string("req").unwrap_or_default())
         }
-        Some(source) if source.starts_with("git+") => {
-            let query = source.split_once('?').map_or("", |(_, query)| query);
-            if query
-                .split('&')
-                .any(|pair| pair.starts_with("rev=") || pair.starts_with("tag="))
-            {
-                Ok(())
-            } else {
-                Err(format!(
-                    "the Git source {source} must name a fixed `rev` or `tag`"
-                ))
-            }
-        }
+        Some(source) if source.starts_with("git+") => fixed_git_source(source),
         Some(source) => Err(format!("its source {source} is not crates.io")),
     }
+}
+
+/// Checks that a Git source, as Cargo writes it (`git+<address>?<reference>`, followed by `#<commit>` in `Cargo.lock`), names a fixed reference: `rev=` with a full commit hash, or `tag=`. Cargo writes no reference for a dependency on the default branch, and it appends the reference to an address that may already have a query of its own, so the reference is what follows the last `?`, and an address that holds another `?` or a `#` is refused as ambiguous.
+fn fixed_git_source(source: &str) -> Result<(), String> {
+    let without_commit = source.split_once('#').map_or(source, |(source, _)| source);
+    let fixed = without_commit
+        .rsplit_once('?')
+        .filter(|(address, _)| !address.contains(['?', '#']))
+        .and_then(|(_, reference)| reference.split_once('='))
+        .is_some_and(|(kind, value)| match kind {
+            "rev" => commit_id(value),
+            "tag" => !value.is_empty(),
+            _ => false,
+        });
+    if fixed {
+        Ok(())
+    } else {
+        Err(format!(
+            "the Git source {source} must name one fixed `rev` (a full commit hash) or `tag`"
+        ))
+    }
+}
+
+/// Whether `text` is a full Git commit hash: 40 (SHA-1) or 64 (SHA-256) hexadecimal digits.
+fn commit_id(text: &str) -> bool {
+    matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Checks that `requirement` is exact: `=` and a full version, such as `=1.2.3` or `=1.0.0-beta.2`.
@@ -219,24 +237,6 @@ fn exact(requirement: &str) -> Result<(), String> {
     } else {
         Err(invalid())
     }
-}
-
-/// Cargo's description of the workspace members, `cargo metadata --no-deps`, as JSON. It reads the manifests only: nothing is built and no build script runs.
-fn cargo_metadata(root: &Path) -> Result<String, String> {
-    let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-        .args(["metadata", "--no-deps", "--format-version", "1", "--locked"])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("could not run `cargo metadata`: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "`cargo metadata` failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|_| "`cargo metadata` printed text that is not UTF-8".to_owned())
 }
 
 #[cfg(test)]
@@ -299,12 +299,15 @@ mod tests {
             [Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(())]
         );
         let problems: Vec<String> = declared(
-            "a = \"1.2.3\"\nb = { version = \"^0.8\" }\nc = { features = [\"x\"] }\nd = { path = \"../outside\" }\ne = { git = \"https://example.org/e\" }\nf = { git = \"https://example.org/f\", branch = \"main\" }\ng = { version = \"=1.0.0\", registry = \"other\" }\nh = { path = \"crates/own\", version = \"1.0\" }\n",
+            "a = \"1.2.3\"\nb = { version = \"^0.8\" }\nc = { features = [\"x\"] }\nd = { path = \"../outside\" }\ne = { git = \"https://example.org/e\" }\nf = { git = \"https://example.org/f\", branch = \"main\" }\ng = { version = \"=1.0.0\", registry = \"other\" }\nh = { path = \"crates/own\", version = \"1.0\" }\ni = { git = \"https://example.org/i\", rev = \"refs/heads/main\" }\nj = { git = \"https://example.org/j\", rev = \"eb23095\" }\nk = { git = \"https://example.org/k\", rev = \"eb23095592359c454a586d16d08b2bd3af44b551\", tag = \"v1\" }\n",
         )
         .into_iter()
         .map(Result::unwrap_err)
         .collect();
-        assert_eq!(problems.len(), 8);
+        assert_eq!(problems.len(), 11);
+        assert!(problems[8].contains("is not a full commit hash"), "{problems:?}");
+        assert!(problems[9].contains("is not a full commit hash"), "{problems:?}");
+        assert!(problems[10].contains("one fixed `rev`"), "{problems:?}");
         assert!(
             problems[0].contains("`1.2.3` is not an exact version requirement"),
             "{problems:?}"
@@ -315,7 +318,7 @@ mod tests {
             problems[3].contains("is not the folder of a workspace member"),
             "{problems:?}"
         );
-        assert!(problems[4].contains("fixed `rev` or `tag`"), "{problems:?}");
+        assert!(problems[4].contains("one fixed `rev`"), "{problems:?}");
         assert!(problems[5].contains("not a branch"), "{problems:?}");
         assert!(problems[6].contains("another registry"), "{problems:?}");
         assert!(problems[7].contains("`1.0`"), "{problems:?}");
@@ -377,6 +380,23 @@ mod tests {
         assert!(
             resolved("{\"name\":\"o\",\"source\":\"directory+/vendor\",\"req\":\"=1.0.0\"}")
                 .is_err()
+        );
+        // The reference is what follows the last `?`: an address with a query of its own cannot pass a branch off as a revision.
+        for source in [
+            "git+https://example.org/floating?rev=0?branch=main",
+            "git+https://example.org/floating?rev=eb23095592359c454a586d16d08b2bd3af44b551?branch=main",
+            "git+https://example.org/r?rev=refs/heads/main",
+            "git+https://example.org/r?rev=eb23095",
+            "git+https://example.org/r?branch=main#eb23095592359c454a586d16d08b2bd3af44b551",
+        ] {
+            assert!(
+                resolved(&format!("{{\"name\":\"g\",\"source\":\"{source}\",\"req\":\"*\"}}")).is_err(),
+                "{source}"
+            );
+        }
+        assert_eq!(
+            resolved("{\"name\":\"g\",\"source\":\"git+https://example.org/g?rev=eb23095592359c454a586d16d08b2bd3af44b551#eb23095592359c454a586d16d08b2bd3af44b551\",\"req\":\"*\"}"),
+            Ok(())
         );
     }
 

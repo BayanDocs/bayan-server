@@ -33,6 +33,8 @@ const TABLE: [&str; 2] = ["workspace", "dependencies"];
 
 /// The dependencies declared in `[workspace.dependencies]` of `text`, in the order they are first declared.
 pub fn workspace_dependencies(text: &str) -> Result<Vec<Dependency>, String> {
+    // Cargo reads a file that starts with a byte-order mark as if it had none.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut dependencies: Vec<Dependency> = Vec::new();
     // The current table's name, split into its parts.
     let mut table: Vec<String> = Vec::new();
@@ -74,17 +76,23 @@ pub fn workspace_dependencies(text: &str) -> Result<Vec<Dependency>, String> {
                 .map_err(|problem| format!("Cargo.toml line {number}: {problem}"))?;
             continue;
         }
+        // An entry of [workspace.dependencies] can also be written from an enclosing table, as `dependencies.name = …` in [workspace] or `workspace.dependencies.name = …` before the first table.
         let in_table = table.len() >= TABLE.len() && table[..TABLE.len()] == TABLE;
-        if !in_table {
+        let encloses_table = table.len() < TABLE.len() && TABLE[..table.len()] == table[..];
+        if !in_table && !encloses_table {
             continue;
         }
         let (key, value) = split_key_value(statement).ok_or_else(|| {
             format!("Cargo.toml line {number}: expected `key = value`, found `{statement}`")
         })?;
-        let mut path: Vec<String> = table[TABLE.len()..].to_vec();
-        path.extend(
+        let mut full: Vec<String> = table.clone();
+        full.extend(
             key_parts(key).map_err(|problem| format!("Cargo.toml line {number}: {problem}"))?,
         );
+        if full.len() <= TABLE.len() || full[..TABLE.len()] != TABLE {
+            continue;
+        }
+        let path: Vec<String> = full[TABLE.len()..].to_vec();
         let value = value.trim();
         let (name, fields) = match path.as_slice() {
             [name] => {
@@ -390,6 +398,26 @@ unsafe_code = "forbid"
         );
         assert_eq!(
             workspace_dependencies("[package]\nname = \"x\"\n"),
+            Ok(Vec::new())
+        );
+    }
+
+    /// Spellings that Cargo reads as entries of [workspace.dependencies] although they are written from an enclosing table, which an earlier version of this reader skipped.
+    #[test]
+    fn reads_entries_written_from_an_enclosing_table() {
+        for text in [
+            "[workspace]\ndependencies.a = \"1.0\"\n",
+            "workspace.dependencies.a = \"1.0\"\n",
+            "workspace.dependencies.a.version = \"1.0\"\n",
+            "\u{feff}[workspace.dependencies]\na = \"1.0\"\n",
+        ] {
+            let dependencies = workspace_dependencies(text).unwrap();
+            assert_eq!(dependencies.len(), 1, "{text:?}");
+            assert_eq!(dependencies[0].name, "a", "{text:?}");
+            assert_eq!(dependencies[0].field("version"), Some("1.0"), "{text:?}");
+        }
+        assert_eq!(
+            workspace_dependencies("[workspace]\nmembers = [\"a\"]\nresolver = \"3\"\n"),
             Ok(Vec::new())
         );
     }

@@ -13,7 +13,7 @@ pub fn now() -> Result<i64, String> {
     i64::try_from(elapsed.as_secs()).map_err(|_| "the system clock is out of range".to_owned())
 }
 
-/// Reads an RFC 3339 timestamp, such as `2026-10-06T15:57:18Z`, `2026-08-28T12:22:30.892284Z` or `2026-10-06T17:57:18+02:00`. Fractions of a second are dropped.
+/// Reads an RFC 3339 timestamp, such as `2026-10-06T15:57:18Z`, `2026-08-28T12:22:30.892284Z` or `2026-10-06T17:57:18+02:00`. A fraction of a second rounds up to the next second, so that a publish time is never read as earlier than it was.
 pub fn parse(text: &str) -> Result<i64, String> {
     let invalid = || format!("`{text}` is not an RFC 3339 timestamp");
     if !text.is_ascii() || text.len() < 20 {
@@ -41,10 +41,14 @@ pub fn parse(text: &str) -> Result<i64, String> {
         return Err(invalid());
     }
     let mut rest = &text[19..];
+    let mut round_up = 0;
     if let Some(fraction) = rest.strip_prefix('.') {
         let length = fraction.bytes().take_while(u8::is_ascii_digit).count();
         if length == 0 {
             return Err(invalid());
+        }
+        if fraction[..length].bytes().any(|digit| digit != b'0') {
+            round_up = 1;
         }
         rest = &fraction[length..];
     }
@@ -69,7 +73,8 @@ pub fn parse(text: &str) -> Result<i64, String> {
             }
         }
     };
-    Ok(days_from_civil(year, month, day) * DAY + hour * 3_600 + minute * 60 + second - offset)
+    Ok(days_from_civil(year, month, day) * DAY + hour * 3_600 + minute * 60 + second + round_up
+        - offset)
 }
 
 /// The number written by the ASCII digits `text[start..end]`, if they are all digits.
@@ -163,7 +168,9 @@ mod tests {
         // The index writes whole seconds, the API microseconds.
         assert_eq!(parse("1970-01-01T00:00:00Z"), Ok(0));
         assert_eq!(parse("2026-10-06T15:57:18Z"), Ok(1_791_302_238));
-        assert_eq!(parse("2026-08-28T12:22:30.892284Z"), Ok(1_787_919_750));
+        // A fraction rounds up, so that a version can never pass the age check up to a second early.
+        assert_eq!(parse("2026-08-28T12:22:30.892284Z"), Ok(1_787_919_751));
+        assert_eq!(parse("2026-08-28T12:22:30.000Z"), Ok(1_787_919_750));
         assert_eq!(
             parse("2026-10-06T17:57:18+02:00"),
             parse("2026-10-06T15:57:18Z")

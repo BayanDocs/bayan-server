@@ -3,19 +3,26 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// A commit and when it was made: the earlier of its author and committer times, so that rebasing or amending a change cannot make it look younger than it is.
+/// A commit and its two times. Git keeps the author time when a commit is amended or rebased, and gives it a new committer time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commit {
     /// The full commit hash.
     pub id: String,
-    /// When it was made, in seconds since 1970.
-    pub time: i64,
+    /// When its change was first written, in seconds since 1970.
+    pub author: i64,
+    /// When the commit itself was last made (amended, rebased or created), in seconds since 1970.
+    pub committer: i64,
 }
 
 impl Commit {
     /// The first twelve characters of the hash, for people.
     pub fn short(&self) -> &str {
         self.id.get(..12).unwrap_or(&self.id)
+    }
+
+    /// The earlier of the author and committer times, so that rebasing or amending a change cannot make it look younger than it is.
+    pub fn time(&self) -> i64 {
+        self.author.min(self.committer)
     }
 }
 
@@ -105,10 +112,11 @@ impl Repository {
         self.run(&["cat-file", "blob", &object]).map(Some)
     }
 
-    /// The commits that `git log <args>` lists, with their times.
+    /// The commits that `git log <args>` lists, with their times. `--no-show-signature` keeps a `log.showSignature` setting from adding lines about signatures, and `--` ends the revisions.
     fn log(&self, args: &[&str]) -> Result<Vec<Commit>, String> {
-        let mut all = vec!["log", "--format=%H %at %ct"];
+        let mut all = vec!["log", "--no-show-signature", "--format=%H %at %ct"];
         all.extend_from_slice(args);
+        all.push("--");
         let output = self.run(&all)?;
         output
             .lines()
@@ -120,11 +128,8 @@ impl Repository {
                 match times.as_deref() {
                     Some([author, committer]) if id.len() >= 40 => Ok(Commit {
                         id,
-                        time: if author < committer {
-                            *author
-                        } else {
-                            *committer
-                        },
+                        author: *author,
+                        committer: *committer,
                     }),
                     _ => Err(format!("cannot read the line `{line}` of git log")),
                 }
@@ -277,11 +282,11 @@ mod tests {
         let repository = Repository::open(test.path()).unwrap();
         let merge_base = repository.merge_base("base").unwrap();
         assert_eq!(merge_base.id, first);
-        assert_eq!(merge_base.time, 1_000_000_000);
+        assert_eq!(merge_base.time(), 1_000_000_000);
         let commits = repository.commits_since(&merge_base).unwrap();
         let ids: Vec<&str> = commits.iter().map(|commit| commit.id.as_str()).collect();
         assert_eq!(ids, [second.as_str(), third.as_str()]);
-        assert_eq!(commits[0].time, 1_000_000_100);
+        assert_eq!(commits[0].time(), 1_000_000_100);
         assert_eq!(commits[0].short(), &second[..12]);
         assert_eq!(
             repository
@@ -318,7 +323,36 @@ mod tests {
         );
         let repository = Repository::open(test.path()).unwrap();
         let commits = repository.log(&["-1", "HEAD"]).unwrap();
-        assert_eq!(commits[0].time, 999_999_000);
+        assert_eq!(commits[0].author, 999_999_000);
+        assert_eq!(commits[0].committer, 1_000_000_900);
+        assert_eq!(commits[0].time(), 999_999_000);
+    }
+
+    #[test]
+    fn reads_the_log_when_git_is_set_to_show_signatures() {
+        let test = TestRepository::new();
+        test.commit("first", 1_000_000_000);
+        // A commit with an SSH signature that Git cannot verify here: with `log.showSignature`, `git log` prints lines such as "No signature" for it unless told not to.
+        let tree = test.git(&["rev-parse", "HEAD^{tree}"], None);
+        let object = test.root.with_extension("commit");
+        std::fs::write(
+            &object,
+            format!(
+                "tree {}\nauthor Test <test@bayandocs.invalid> 1000000100 +0000\ncommitter Test <test@bayandocs.invalid> 1000000100 +0000\ngpgsig -----BEGIN SSH SIGNATURE-----\n U1NIU0lHAAAAAQ==\n -----END SSH SIGNATURE-----\n\nsigned\n",
+                tree.trim()
+            ),
+        )
+        .unwrap();
+        let signed = test.git(
+            &["hash-object", "-t", "commit", "-w", &object.to_string_lossy()],
+            None,
+        );
+        std::fs::remove_file(&object).unwrap();
+        test.git(&["update-ref", "HEAD", signed.trim()], None);
+        test.git(&["config", "log.showSignature", "true"], None);
+        let repository = Repository::open(test.path()).unwrap();
+        let commits = repository.log(&["-1", "HEAD"]).unwrap();
+        assert_eq!(commits[0].time(), 1_000_000_100);
     }
 
     #[test]
