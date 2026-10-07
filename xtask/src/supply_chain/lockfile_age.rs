@@ -286,7 +286,10 @@ fn judge(published: i64, commit: Option<&Commit>, now: i64) -> Result<String, St
             };
             let dated = format!("{}, {}", commit.short(), time::display(made));
             if made > now {
-                (now, format!("now (its commit {dated} is dated in the future)"))
+                (
+                    now,
+                    format!("now (its commit {dated} is dated in the future)"),
+                )
             } else if made < published {
                 (
                     now,
@@ -522,7 +525,11 @@ mod tests {
             "{problem}"
         );
         assert!(problem.contains(&format!("but crates.io published {}", ZEROCOPY_0_8_59.2)));
-        assert!(lines.iter().any(|line| line == "WRONG CHECKSUM: zerocopy 0.8.59"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "WRONG CHECKSUM: zerocopy 0.8.59")
+        );
         // A changed checksum of a version already in the lockfile counts as a change, so it is looked up too.
         let base = lockfile(&[ZEROCOPY_0_8_59]);
         let tampered = base.replace(ZEROCOPY_0_8_59.2, &"0".repeat(64));
@@ -531,7 +538,11 @@ mod tests {
             lines[0].contains("adds or changes 1 package version(s)"),
             "{lines:?}"
         );
-        assert!(result.unwrap_err().contains("Cargo.lock records the checksum"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Cargo.lock records the checksum")
+        );
     }
 
     #[test]
@@ -600,7 +611,10 @@ mod tests {
         // Both times before the version was published cannot be right: it is measured against now, which is old enough here...
         let impossible = commit(time("2026-09-14T00:00:00Z"), time("2026-09-15T00:00:00Z"));
         let line = judge(published, Some(&impossible), now).unwrap();
-        assert!(line.contains("dated before the version was published"), "{line}");
+        assert!(
+            line.contains("dated before the version was published"),
+            "{line}"
+        );
         // ...and too young here.
         let soon = time("2026-09-16T06:00:00Z");
         let problem = judge(published, Some(&impossible), soon).unwrap_err();
@@ -639,7 +653,10 @@ mod tests {
         )];
         for (name, version, source, folder) in others {
             packages.push(package(
-                &format!("{}#{name}@{version}", source.unwrap_or("path+file:///elsewhere")),
+                &format!(
+                    "{}#{name}@{version}",
+                    source.unwrap_or("path+file:///elsewhere")
+                ),
                 name,
                 version,
                 *source,
@@ -672,10 +689,16 @@ mod tests {
     #[test]
     fn accepts_a_resolve_that_matches_the_lockfile() {
         let root = std::env::temp_dir().join("bayandocs-xtask-resolve");
-        let cache = std::env::temp_dir().join("bayandocs-xtask-cache").join("hyper-1.11.1");
+        let cache = std::env::temp_dir()
+            .join("bayandocs-xtask-cache")
+            .join("hyper-1.11.1");
         let resolve = metadata(&root, &[("hyper", "1.11.1", Some(CRATES_IO), &cache)]);
         assert_eq!(
-            check_resolve(&root, &locked(&[("hyper", "1.11.1", Some(CRATES_IO))]), &resolve),
+            check_resolve(
+                &root,
+                &locked(&[("hyper", "1.11.1", Some(CRATES_IO))]),
+                &resolve
+            ),
             Ok(())
         );
     }
@@ -684,11 +707,16 @@ mod tests {
     #[test]
     fn fails_when_cargo_builds_another_lockfile() {
         let root = std::env::temp_dir().join("bayandocs-xtask-resolve");
-        let cache = std::env::temp_dir().join("bayandocs-xtask-cache").join("hyper-1.12.0");
+        let cache = std::env::temp_dir()
+            .join("bayandocs-xtask-cache")
+            .join("hyper-1.12.0");
         let resolve = metadata(&root, &[("hyper", "1.12.0", Some(CRATES_IO), &cache)]);
-        let problem =
-            check_resolve(&root, &locked(&[("hyper", "1.11.1", Some(CRATES_IO))]), &resolve)
-                .unwrap_err();
+        let problem = check_resolve(
+            &root,
+            &locked(&[("hyper", "1.11.1", Some(CRATES_IO))]),
+            &resolve,
+        )
+        .unwrap_err();
         assert!(
             problem.contains("Cargo resolves hyper 1.12.0 (registry+https://github.com/rust-lang/crates.io-index), which Cargo.lock does not list"),
             "{problem}"
@@ -709,7 +737,9 @@ mod tests {
         let problem =
             check_resolve(&root, &locked(&[("cfg-if", "1.0.5", None)]), &resolve).unwrap_err();
         assert!(
-            problem.contains("cfg-if 1.0.5 is not a workspace member, but Cargo builds it from the folder"),
+            problem.contains(
+                "cfg-if 1.0.5 is not a workspace member, but Cargo builds it from the folder"
+            ),
             "{problem}"
         );
     }

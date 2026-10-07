@@ -135,7 +135,10 @@ fn check_declared(dependency: &Dependency, root: &Path, members: &Members) -> Re
                 "`rev = \"{rev}\"` is not a full commit hash, so it can name a branch; write the commit's 40-character hash"
             )),
             (None, Some(tag)) if !tag.is_empty() => Ok(()),
-            _ => Err("a Git dependency must name one fixed `rev` (a full commit hash) or `tag`".to_owned()),
+            _ => Err(
+                "a Git dependency must name one fixed `rev` (a full commit hash) or `tag`"
+                    .to_owned(),
+            ),
         };
     }
     if dependency.field("version").is_none() {
@@ -305,8 +308,14 @@ mod tests {
         .map(Result::unwrap_err)
         .collect();
         assert_eq!(problems.len(), 11);
-        assert!(problems[8].contains("is not a full commit hash"), "{problems:?}");
-        assert!(problems[9].contains("is not a full commit hash"), "{problems:?}");
+        assert!(
+            problems[8].contains("is not a full commit hash"),
+            "{problems:?}"
+        );
+        assert!(
+            problems[9].contains("is not a full commit hash"),
+            "{problems:?}"
+        );
         assert!(problems[10].contains("one fixed `rev`"), "{problems:?}");
         assert!(
             problems[0].contains("`1.2.3` is not an exact version requirement"),
@@ -390,12 +399,17 @@ mod tests {
             "git+https://example.org/r?branch=main#eb23095592359c454a586d16d08b2bd3af44b551",
         ] {
             assert!(
-                resolved(&format!("{{\"name\":\"g\",\"source\":\"{source}\",\"req\":\"*\"}}")).is_err(),
+                resolved(&format!(
+                    "{{\"name\":\"g\",\"source\":\"{source}\",\"req\":\"*\"}}"
+                ))
+                .is_err(),
                 "{source}"
             );
         }
         assert_eq!(
-            resolved("{\"name\":\"g\",\"source\":\"git+https://example.org/g?rev=eb23095592359c454a586d16d08b2bd3af44b551#eb23095592359c454a586d16d08b2bd3af44b551\",\"req\":\"*\"}"),
+            resolved(
+                "{\"name\":\"g\",\"source\":\"git+https://example.org/g?rev=eb23095592359c454a586d16d08b2bd3af44b551#eb23095592359c454a586d16d08b2bd3af44b551\",\"req\":\"*\"}"
+            ),
             Ok(())
         );
     }

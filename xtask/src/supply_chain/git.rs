@@ -344,7 +344,13 @@ mod tests {
         )
         .unwrap();
         let signed = test.git(
-            &["hash-object", "-t", "commit", "-w", &object.to_string_lossy()],
+            &[
+                "hash-object",
+                "-t",
+                "commit",
+                "-w",
+                &object.to_string_lossy(),
+            ],
             None,
         );
         std::fs::remove_file(&object).unwrap();

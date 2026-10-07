@@ -314,11 +314,15 @@ mod tests {
             "2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c"
         );
         assert_eq!(
-            crates_io.published("Hyper", "1.11.1").map(|published| published.time),
+            crates_io
+                .published("Hyper", "1.11.1")
+                .map(|published| published.time),
             time::parse("2026-08-28T12:22:30Z")
         );
         assert_eq!(
-            crates_io.published("zerocopy", "0.8.60").map(|published| published.time),
+            crates_io
+                .published("zerocopy", "0.8.60")
+                .map(|published| published.time),
             time::parse("2026-10-05T23:02:10Z")
         );
         assert_eq!(
@@ -336,11 +340,15 @@ mod tests {
         let mut crates_io = CratesIo::new(&mut recorded, Duration::ZERO);
         // The recorded line of serde 1.0.228 has its pubtime removed; the API's `version.created_at` takes its place, not the `created_at` of the publisher's account that the answer also contains.
         assert_eq!(
-            crates_io.published("serde", "1.0.228").map(|published| published.time),
+            crates_io
+                .published("serde", "1.0.228")
+                .map(|published| published.time),
             time::parse("2025-09-27T16:51:35.265429Z")
         );
         assert_eq!(
-            crates_io.published("serde", "1.0.229").map(|published| published.time),
+            crates_io
+                .published("serde", "1.0.229")
+                .map(|published| published.time),
             time::parse("2026-07-18T23:05:13Z")
         );
         assert_eq!(
@@ -371,11 +379,15 @@ mod tests {
         let mut crates_io = CratesIo::new(&mut recorded, Duration::from_millis(200));
         let started = Instant::now();
         assert_eq!(
-            crates_io.published("a", "1.0.0").map(|published| published.time),
+            crates_io
+                .published("a", "1.0.0")
+                .map(|published| published.time),
             time::parse("2020-01-01T00:00:00Z")
         );
         assert_eq!(
-            crates_io.published("a", "2.0.0").map(|published| published.time),
+            crates_io
+                .published("a", "2.0.0")
+                .map(|published| published.time),
             time::parse("2021-01-01T00:00:00Z")
         );
         assert!(started.elapsed() >= Duration::from_millis(200));

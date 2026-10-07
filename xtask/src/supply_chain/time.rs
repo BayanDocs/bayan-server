@@ -73,8 +73,10 @@ pub fn parse(text: &str) -> Result<i64, String> {
             }
         }
     };
-    Ok(days_from_civil(year, month, day) * DAY + hour * 3_600 + minute * 60 + second + round_up
-        - offset)
+    Ok(
+        days_from_civil(year, month, day) * DAY + hour * 3_600 + minute * 60 + second + round_up
+            - offset,
+    )
 }
 
 /// The number written by the ASCII digits `text[start..end]`, if they are all digits.

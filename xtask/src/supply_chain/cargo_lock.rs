@@ -267,7 +267,9 @@ source = "git+https://example.org/gitdep?rev=eb23095592359c454a586d16d08b2bd3af4
             format!("version = 4\n\n[[ package ]]\n{hidden}"),
             format!("version = 4\n\n[[\"package\"]]\n{hidden}"),
             "version = 4\npackage = [{ name = \"hyper\", version = \"1.12.0\" }]\n".to_owned(),
-            format!("version = 4\n\n[metadata]\n\"checksum a 1.0.0\" = \"x\"\n\n[[package]]\n{hidden}"),
+            format!(
+                "version = 4\n\n[metadata]\n\"checksum a 1.0.0\" = \"x\"\n\n[[package]]\n{hidden}"
+            ),
             format!("version = 4\n\n[[patch.unused]]\n{hidden}"),
         ] {
             assert!(parse(&text).is_err(), "{text:?}");
