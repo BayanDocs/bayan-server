@@ -3,6 +3,7 @@
 //! - `verify`: the verification gate that CI runs and that must pass before every push.
 //! - `sqlx-prepare [--check]`: regenerates (or, with `--check`, verifies) the committed sqlx query metadata against scratch SQLite and PostgreSQL databases.
 //! - `test-postgres`: runs the PostgreSQL integration test against the server named by `BAYAN_TEST_POSTGRES_URL`.
+//! - `check-exact-pins` and `check-lockfile-age [--base <revision>]`: the supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003; see `supply_chain/`, which is identical in bayan-core). `verify` runs both.
 //!
 //! It uses only the standard library and runs the real tools with [`std::process::Command`].
 
@@ -17,7 +18,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const USAGE: &str = "usage: cargo xtask <verify | sqlx-prepare [--check] | test-postgres>";
+mod supply_chain;
+
+const USAGE: &str = "usage: cargo xtask <verify | sqlx-prepare [--check] | test-postgres | check-exact-pins | check-lockfile-age [--base <revision>]>";
 
 /// The backend crates whose queries sqlx checks at compile time. `sqlx-prepare` compiles each one on its own against its own database, so a single `DATABASE_URL` at a time is enough.
 const SQLITE: &str = "bayan-db-sqlite";
@@ -37,6 +40,14 @@ fn main() -> ExitCode {
         ["sqlx-prepare"] => sqlx_prepare(false),
         ["sqlx-prepare", "--check"] => sqlx_prepare(true),
         ["test-postgres"] => test_postgres(),
+        ["check-exact-pins"] => workspace_root()
+            .and_then(|root| supply_chain::exact_pins::check(&root, &mut |line| report(line))),
+        ["check-lockfile-age"] => workspace_root().and_then(|root| {
+            supply_chain::lockfile_age::check(&root, None, &mut |line| report(line))
+        }),
+        ["check-lockfile-age", "--base", base] => workspace_root().and_then(|root| {
+            supply_chain::lockfile_age::check(&root, Some(base), &mut |line| report(line))
+        }),
         _ => Err(USAGE.to_owned()),
     };
     match result {
@@ -88,12 +99,20 @@ fn verify() -> Result {
     Ok(())
 }
 
-/// Hook for the supply-chain checks of work package X-003 (Cargo.lock publish-age check, update-bot ban). X-003 implements them here so that `verify` runs them everywhere.
+/// The supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003, `supply_chain/`): every dependency is pinned exactly, and every package version that the change adds to `Cargo.lock` is at least 24 hours old. The second compares with the merge base of the branch the change goes into (`origin/<GITHUB_BASE_REF>` in a pull request on GitHub Actions, otherwise `origin/main`), so it needs the full Git history; it uses the network only when `Cargo.lock` changed. The update-bot check and pip-audit run in the supply-chain workflow (`.github/workflows/supply-chain.yml`).
 fn supply_chain_checks() -> Result {
+    let root = workspace_root()?;
+    eprintln!("xtask: check-exact-pins: every dependency is pinned exactly (ADR-0017 rule 5)");
+    supply_chain::exact_pins::check(&root, &mut |line| report(line))?;
     eprintln!(
-        "xtask: supply-chain checks: not implemented yet (work package X-003 adds them here)"
+        "xtask: check-lockfile-age: every package version added to Cargo.lock was published at least 24 hours before it was added (ADR-0017 rule 4)"
     );
-    Ok(())
+    supply_chain::lockfile_age::check(&root, None, &mut |line| report(line))
+}
+
+/// Prints one line of what a supply-chain check found.
+fn report(line: &str) {
+    eprintln!("xtask:   {line}");
 }
 
 /// Regenerates the sqlx query metadata of every backend crate, or with `check` verifies the committed metadata is current.
