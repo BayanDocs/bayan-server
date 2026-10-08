@@ -8,7 +8,7 @@
 //! 4. It finds the first commit since the merge base whose `Cargo.lock` contains each added version, and the time that commit was made (`judge`). A version that only the working tree contains (not committed yet) is measured against now.
 //! 5. It looks up each added crates.io version in the crates.io index (`crates_io.rs`). It fails if the version was published less than 24 hours before the commit that added it, or less than 24 hours before now, and if the checksum in `Cargo.lock` is not the one crates.io publishes. Measuring against now as well means that no commit date, however it is set, can make a young version pass.
 //!
-//! Versions from Git repositories have no crates.io publish time; they are listed as not checked, and the pull request that adds one states the age of its commit (cargo-deny allows only the repositories listed in `deny.toml`). The workspace's own crates are not checked.
+//! A version from a Git repository has no crates.io publish time and no checksum that crates.io published, so this check cannot judge it, and it refuses every one that a change adds. `deny.toml` allows no Git repository either, but cargo-deny runs only after the build, when the dependency's build script, procedural macros and tests have already run; a work package that needs a Git dependency must first teach this check to judge its commit. The workspace's own crates are not checked.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -253,9 +253,12 @@ fn evaluate(
                     }
                 }
             }
-            Some(source) if source.starts_with("git+") => report(&format!(
-                "not checked: {label} comes from a Git repository ({source}), which has no crates.io publish time; the pull request must state the age of that commit (ADR-0017 rule 4)"
-            )),
+            Some(source) if source.starts_with("git+") => {
+                report(&format!("REFUSED: {label}: from a Git repository"));
+                problems.push(format!(
+                    "{label} comes from a Git repository ({source}), which has no crates.io publish time or checksum to check (ADR-0017 rule 4); this check refuses every Git dependency until a work package teaches it to judge one"
+                ));
+            }
             Some(source) => problems.push(format!(
                 "{label} comes from `{source}`; dependencies come only from crates.io (ADR-0017)"
             )),
@@ -545,8 +548,9 @@ mod tests {
         );
     }
 
+    /// A Git dependency used to be reported as "not checked" and let through, so that only cargo-deny refused it, after the build had compiled it and run its build script (found in the review of X-003).
     #[test]
-    fn reports_git_and_other_sources() {
+    fn refuses_git_and_other_sources() {
         let base = lockfile(&[]);
         let change = format!(
             "{base}\n[[package]]\nname = \"gitdep\"\nversion = \"0.1.0\"\nsource = \"git+https://example.org/gitdep?rev=eb23095592359c454a586d16d08b2bd3af44b551#eb23095592359c454a586d16d08b2bd3af44b551\"\n\n[[package]]\nname = \"elsewhere\"\nversion = \"1.0.0\"\nsource = \"registry+https://example.org/index\"\nchecksum = \"{}\"\n",
@@ -556,15 +560,17 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line
-                    .starts_with("not checked: gitdep 0.1.0 comes from a Git repository")),
+                .any(|line| line == "REFUSED: gitdep 0.1.0: from a Git repository"),
             "{lines:?}"
         );
+        let error = result.unwrap_err();
         assert!(
-            result
-                .unwrap_err()
-                .contains("elsewhere 1.0.0 comes from `registry+https://example.org/index`")
+            error.contains(
+                "gitdep 0.1.0 comes from a Git repository (git+https://example.org/gitdep?rev="
+            ),
+            "{error}"
         );
+        assert!(error.contains("elsewhere 1.0.0 comes from `registry+https://example.org/index`"));
         assert!(requests.is_empty());
     }
 
