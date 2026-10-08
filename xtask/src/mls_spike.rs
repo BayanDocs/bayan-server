@@ -1,6 +1,6 @@
 //! Commands for the MLS spike of work package SRV-002 (`spikes/mls`, a Cargo workspace of its own; see its REPORT.md).
 //!
-//! - [`verify_steps`]: the spike's part of `cargo xtask verify` (format, Clippy, tests, documentation, cargo deny with the server's `deny.toml`).
+//! - [`verify_steps`]: the spike's part of `cargo xtask verify` after the server's steps (format, Clippy, tests, documentation, cargo deny with the server's `deny.toml`). The exact-pin check of the supply-chain checks covers the spike's workspace ([`workspace`]) too, at the very start of `verify`.
 //! - `mls-spike-wasm [node | chromium]`: the spike's tests in WebAssembly, in Node.js and in headless Chromium.
 //! - `mls-spike-bench <native | node | chromium>`: the measurements of the report.
 //! - `mls-spike-wasm-size`: the size of the WebAssembly a web client would download.
@@ -42,8 +42,13 @@ impl Host {
     }
 }
 
+/// The folder of the spike's Cargo workspace, which has its own `Cargo.lock`.
+pub fn workspace(root: &Path) -> PathBuf {
+    root.join("spikes").join("mls")
+}
+
 fn spike_manifest(root: &Path) -> PathBuf {
-    root.join("spikes").join("mls").join("Cargo.toml")
+    workspace(root).join("Cargo.toml")
 }
 
 /// A Cargo command for the spike's workspace.

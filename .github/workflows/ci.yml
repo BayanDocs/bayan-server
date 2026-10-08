@@ -25,7 +25,7 @@ env:
 
 jobs:
   supply-chain:
-    # First, and needed by the jobs that build: no code of a dependency these checks reject (its build script, procedural macros or tests) may run before they pass. They compile only xtask, which has no dependencies. The verification gate runs them again as its first step.
+    # First, and needed by the jobs that build: no code of a dependency these checks reject (its build script, procedural macros or tests) may run before they pass. They compile only xtask, which has no dependencies. check-exact-pins covers the server's workspace and the MLS spike's (spikes/mls, which has its own Cargo.lock); check-lockfile-age covers the server's Cargo.lock only (xtask/src/main.rs says why). The verification gate runs them again as its first step.
     name: Supply-chain checks
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -140,6 +140,7 @@ jobs:
   mls-spike:
     name: MLS spike in WebAssembly (Node.js and Chromium)
     runs-on: ubuntu-24.04
+    needs: supply-chain
     timeout-minutes: 30
     permissions:
       contents: read
