@@ -2,6 +2,8 @@
 //!
 //! The roster maps every user with a device in the group to one role. It lives in the MLS group context, so all members agree on it in each epoch: it is covered by the signature on every `GroupInfo`, bound into the key schedule through the group context, and can only change through a commit, which its committer signs. Changing it is an owner's privilege, enforced by the server's validator and independently by every client (see [`crate::policy`]).
 //!
+//! The group context holds exactly two extensions, the ones [`Roster::group_context_extensions`] builds: the roster, and the required-capabilities extension that requires the roster's type and basic credentials. [`Roster::from_group_context`] refuses any other context, for example one with external senders (which would let someone outside the group propose changes), so neither the server nor a client accepts a group or a commit that adds anything else.
+//!
 //! Wire format (version 1), parsed with limits because it arrives from the network:
 //!
 //! ```text
@@ -99,6 +101,11 @@ pub enum RosterError {
     /// The roster has more than [`MAX_ROSTER_ENTRIES`] entries.
     #[error("the role roster has more than {MAX_ROSTER_ENTRIES} entries")]
     TooLarge,
+    /// The group context holds extensions other than exactly the roster and its required capabilities.
+    #[error(
+        "the group context holds other extensions than the roster and its required capabilities"
+    )]
+    UnexpectedExtensions,
 }
 
 /// The role of every user in a group.
@@ -235,21 +242,30 @@ impl Roster {
         .map_err(|_| RosterError::Malformed)
     }
 
-    /// Reads the roster from a group context.
+    /// Reads the roster from a group context received from someone else (a new group, a Welcome, a commit), which must hold exactly the extensions [`Self::group_context_extensions`] builds.
     ///
     /// # Errors
     ///
-    /// Returns [`RosterError::Missing`] if there is no roster, or a decoding error.
+    /// Returns [`RosterError::Missing`] if there is no roster, a decoding error, or [`RosterError::UnexpectedExtensions`] if the context holds anything else.
     pub fn from_group_context(context: &GroupContext) -> Result<Self, RosterError> {
         Self::from_extensions(context.extensions())
     }
 
-    /// Reads the roster from a group context's extensions.
+    /// Reads the roster from a group context's extensions, which must be exactly the ones [`Self::group_context_extensions`] builds, in that order.
     ///
     /// # Errors
     ///
-    /// Returns [`RosterError::Missing`] if there is no roster, or a decoding error.
+    /// Returns [`RosterError::Missing`] if there is no roster, a decoding error, or [`RosterError::UnexpectedExtensions`] if the extensions hold anything else.
     pub fn from_extensions(extensions: &Extensions<GroupContext>) -> Result<Self, RosterError> {
+        let roster = Self::find_in(extensions)?;
+        if *extensions != roster.group_context_extensions()? {
+            return Err(RosterError::UnexpectedExtensions);
+        }
+        Ok(roster)
+    }
+
+    /// Reads the roster from extensions without checking what else they hold: only for a group this client already accepted through [`Self::from_group_context`], or a misbehaving client in tests.
+    pub(crate) fn find_in(extensions: &Extensions<GroupContext>) -> Result<Self, RosterError> {
         let extension = extensions
             .unknown(ROSTER_EXTENSION_TYPE)
             .ok_or(RosterError::Missing)?;
@@ -358,6 +374,51 @@ mod tests {
         assert_eq!(
             Roster::from_bytes(&[1, 0xff, 0xff]),
             Err(RosterError::TooLarge)
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn group_contexts_must_hold_exactly_the_roster_and_its_requirement() {
+        use openmls::prelude::{BasicCredential, ExternalSender, SignaturePublicKey};
+
+        let roster = Roster::new().with(user("alice"), Role::Owner);
+        let exact = roster.group_context_extensions().unwrap();
+        assert_eq!(Roster::from_extensions(&exact), Ok(roster.clone()));
+
+        let mut with_external_sender: Vec<Extension> = exact.iter().cloned().collect();
+        with_external_sender.push(Extension::ExternalSenders(vec![ExternalSender::new(
+            SignaturePublicKey::from(vec![0x42; 32]),
+            BasicCredential::new(b"server/operator".to_vec()).into(),
+        )]));
+        let without_requirement: Vec<Extension> = exact.iter().skip(1).cloned().collect();
+        let other_requirement = vec![
+            Extension::RequiredCapabilities(RequiredCapabilitiesExtension::new(
+                &[ExtensionType::Unknown(ROSTER_EXTENSION_TYPE)],
+                &[],
+                &[],
+            )),
+            exact.iter().nth(1).cloned().unwrap(),
+        ];
+        let mut reordered: Vec<Extension> = exact.iter().cloned().collect();
+        reordered.reverse();
+        for extensions in [
+            with_external_sender,
+            without_requirement,
+            other_requirement,
+            reordered,
+        ] {
+            let extensions = Extensions::try_from(extensions).unwrap();
+            assert_eq!(
+                Roster::from_extensions(&extensions),
+                Err(RosterError::UnexpectedExtensions),
+                "{extensions:?}"
+            );
+            // Code that already accepted a group can still find the roster in it.
+            assert_eq!(Roster::find_in(&extensions), Ok(roster.clone()));
+        }
+        assert_eq!(
+            Roster::from_extensions(&Extensions::empty()),
+            Err(RosterError::Missing)
         );
     }
 }

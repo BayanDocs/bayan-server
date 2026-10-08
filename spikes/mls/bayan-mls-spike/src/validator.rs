@@ -64,6 +64,9 @@ pub enum Rejection {
     /// OpenMLS refused the message (the text names OpenMLS's error type, never message content).
     #[error("MLS error: {0}")]
     Mls(String),
+    /// The group is quarantined: after a commit, the state OpenMLS merged differed from what the policy had approved, so the validator accepts nothing more for it until someone (an operator, or a recovery design from SRV-103) steps in.
+    #[error("the group is quarantined")]
+    Quarantined,
 }
 
 fn mls(error: impl std::fmt::Debug) -> Rejection {
@@ -87,6 +90,8 @@ struct TrackedGroup {
     view: GroupView,
     /// The view before the last commit, to judge late application messages from the previous epoch.
     previous: Option<GroupView>,
+    /// Set when the merged state of a commit differed from what the policy approved; see [`Rejection::Quarantined`].
+    quarantined: bool,
 }
 
 /// The validator for every group on one server.
@@ -161,6 +166,7 @@ impl Validator {
                 public,
                 view,
                 previous: None,
+                quarantined: false,
             },
         );
         Ok(group_id)
@@ -185,6 +191,9 @@ impl Validator {
             .groups
             .get_mut(message.group_id().as_slice())
             .ok_or(Rejection::UnknownGroup)?;
+        if group.quarantined {
+            return Err(Rejection::Quarantined);
+        }
         let current = group.public.group_context().epoch().as_u64();
         if message.epoch().as_u64() != current {
             return Err(Rejection::WrongEpoch {
@@ -224,13 +233,14 @@ impl Validator {
             .public
             .merge_commit(self.provider.storage(), *staged)
             .map_err(mls)?;
-        // The state OpenMLS tracks and the state the policy predicted must agree.
+        // The state OpenMLS tracks and the state the policy approved must agree. OpenMLS has already merged the commit, and its public group cannot be copied beforehand, so on a mismatch the group is quarantined instead of continuing from a state the policy never approved.
         let tracked = wire::view_of(
             group.public.members(),
             Roster::from_group_context(group.public.group_context()),
-        )?;
-        if tracked != after {
-            return Err(PolicyViolation::MembershipMismatch.into());
+        );
+        if tracked.as_ref().ok() != Some(&after) {
+            group.quarantined = true;
+            return Err(Rejection::Quarantined);
         }
         group.previous = Some(std::mem::replace(&mut group.view, after));
         Ok(Accepted {
@@ -262,6 +272,9 @@ impl Validator {
             .groups
             .get(message.group_id().as_slice())
             .ok_or(Rejection::UnknownGroup)?;
+        if group.quarantined {
+            return Err(Rejection::Quarantined);
+        }
         let current = group.public.group_context().epoch().as_u64();
         let epoch = message.epoch().as_u64();
         policy::check_application_sender(&group.view, authenticated)?;

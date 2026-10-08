@@ -63,7 +63,7 @@ pub struct CommitSummary {
     pub added: Vec<DeviceId>,
     /// Devices the commit removes.
     pub removed: Vec<DeviceId>,
-    /// The roster after the commit, if the commit changes the group-context extensions.
+    /// The roster in the new group context, if the commit carries a group-context-extensions proposal. Only owners may send one, even one that leaves the roster as it is; the new context must hold exactly the roster and its required capabilities ([`Roster::from_group_context`]).
     pub new_roster: Option<Roster>,
     /// The credential identity in the committer's new leaf, if the commit has an update path.
     pub path_identity: Option<DeviceId>,
@@ -148,17 +148,22 @@ pub fn check_commit(
             return Err(PolicyViolation::MembershipMismatch);
         }
     }
+    // Only owners may change the group context at all, even with a commit that keeps the roster: no other role has a reason to, and the context decides who may act on the group (external senders, for example).
     let roster = match &commit.new_roster {
-        Some(roster) if roster != &before.roster => {
+        Some(roster) => {
             if !role.can_manage_members() {
                 return Err(PolicyViolation::NotAllowed {
                     role,
-                    action: "changing roles",
+                    action: if roster == &before.roster {
+                        "changing the group context"
+                    } else {
+                        "changing roles"
+                    },
                 });
             }
             roster.clone()
         }
-        _ => before.roster.clone(),
+        None => before.roster.clone(),
     };
     let after = GroupView { members, roster };
     after.check_consistent()?;
@@ -310,6 +315,20 @@ mod tests {
                     Err(PolicyViolation::NotAllowed { .. })
                 ),
                 "{committer} promoted"
+            );
+
+            // Not even a context change that keeps the roster as it is.
+            let mut same_roster = commit(committer);
+            same_roster.new_roster = Some(before.roster.clone());
+            assert!(
+                matches!(
+                    check_commit(&before, &same_roster),
+                    Err(PolicyViolation::NotAllowed {
+                        action: "changing the group context",
+                        ..
+                    })
+                ),
+                "{committer} changed the group context"
             );
         }
     }

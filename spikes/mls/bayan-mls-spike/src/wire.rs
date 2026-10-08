@@ -33,9 +33,9 @@ pub enum WireError {
     /// A leaf index does not point at a member.
     #[error("a leaf index does not belong to a member")]
     UnknownLeaf,
-    /// The group context's roster is missing or malformed.
-    #[error("the group's role roster is missing or malformed")]
-    InvalidRoster,
+    /// The group context's roster is missing or malformed, or the context holds other extensions (see [`Roster::from_group_context`]).
+    #[error("invalid group context: {0}")]
+    InvalidRoster(#[from] crate::roster::RosterError),
 }
 
 /// Decodes one MLS message, refusing anything above [`MAX_MESSAGE_LEN`] or with trailing bytes.
@@ -131,7 +131,7 @@ pub fn view_of(
     let members = members
         .map(|member| device_of(&member.credential))
         .collect::<Result<BTreeSet<_>, _>>()?;
-    let roster = roster.map_err(|_| WireError::InvalidRoster)?;
+    let roster = roster?;
     Ok(GroupView { members, roster })
 }
 
@@ -139,7 +139,7 @@ pub fn view_of(
 ///
 /// # Errors
 ///
-/// Returns an error if a credential, a leaf index or the new roster is invalid.
+/// Returns an error if a credential or a leaf index is invalid, or if the new group context holds anything but a valid roster and its required capabilities.
 pub fn summarize_commit(
     committer: &Credential,
     staged: &StagedCommit,
@@ -156,7 +156,7 @@ pub fn summarize_commit(
             .transpose()?,
         unsupported: Vec::new(),
     };
-    let mut changes_extensions = false;
+    let mut changes_context = false;
     for queued in staged.queued_proposals() {
         if queued.proposal_or_ref_type() == ProposalOrRefType::Reference {
             summary.unsupported.push("proposal by reference".to_owned());
@@ -170,17 +170,16 @@ pub fn summarize_commit(
                 let credential = credential_at(remove.removed()).ok_or(WireError::UnknownLeaf)?;
                 summary.removed.push(device_of(&credential)?);
             }
-            Proposal::GroupContextExtensions(_) => changes_extensions = true,
+            Proposal::GroupContextExtensions(_) => changes_context = true,
             other => summary
                 .unsupported
                 .push(format!("{:?}", other.proposal_type())),
         }
     }
-    if changes_extensions {
-        summary.new_roster = Some(
-            Roster::from_group_context(staged.group_context())
-                .map_err(|_| WireError::InvalidRoster)?,
-        );
+    // After every commit the group context must hold exactly the roster and its required capabilities, checked before anyone merges it. A commit that changes the context also gives the policy the new roster to judge.
+    let roster = Roster::from_group_context(staged.group_context())?;
+    if changes_context {
+        summary.new_roster = Some(roster);
     }
     Ok(summary)
 }

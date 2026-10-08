@@ -2,7 +2,7 @@
 //!
 //! OpenMLS keeps all state (keys, ratchet trees, epoch secrets) in a storage provider. The spike uses OpenMLS's in-memory provider and saves its key-value pairs wholesale. A device would keep this file encrypted at rest under a key from the operating system's keychain (SEC-11); the spike's file is not encrypted, so it is test data only.
 //!
-//! Groups with a provisional ciphersuite are never saved (ADR-0016 Decision 2): [`export`] refuses them.
+//! Nothing made with a provisional ciphersuite is ever saved (ADR-0016 Decision 2): [`export`] refuses a device that holds a group with such a suite or has ever created key material for one, such as a key package, whose private keys would otherwise be saved with the rest of the storage.
 //!
 //! Format (version 1), parsed with limits:
 //!
@@ -37,8 +37,8 @@ pub const MAX_STATE_LEN: usize = 256 * 1024 * 1024;
 /// Why a state could not be saved or loaded.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PersistError {
-    /// A group uses a provisional ciphersuite, which must never be persisted.
-    #[error("groups with a provisional ciphersuite are never saved")]
+    /// The device holds a group or key material (such as a key package) for a provisional ciphersuite, which must never be persisted.
+    #[error("nothing made with a provisional ciphersuite is ever saved")]
     ProvisionalSuite,
     /// The saved state is malformed, too large or from another format version.
     #[error("the saved state is malformed")]
@@ -52,8 +52,11 @@ pub enum PersistError {
 ///
 /// # Errors
 ///
-/// Returns [`PersistError::ProvisionalSuite`] if any group uses a provisional ciphersuite.
+/// Returns [`PersistError::ProvisionalSuite`] if any group uses a provisional ciphersuite, or if the device ever created key material for one.
 pub fn export(client: &Client) -> Result<Vec<u8>, PersistError> {
+    if client.holds_provisional_key_material() {
+        return Err(PersistError::ProvisionalSuite);
+    }
     for group_id in client.group_ids() {
         let suite = client
             .suite(group_id)

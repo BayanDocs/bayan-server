@@ -1,4 +1,4 @@
-//! Saving a client's MLS state and loading it again, and the rule that provisional ciphersuites are never saved.
+//! Saving a client's MLS state and loading it again, and the rule that nothing made with a provisional ciphersuite is ever saved.
 
 use bayan_mls_spike::client::Received;
 use bayan_mls_spike::persist::{self, PersistError};
@@ -96,4 +96,27 @@ fn provisional_suites_are_never_saved() {
         persist::export(deployment.client(&alice)).err(),
         Some(PersistError::ProvisionalSuite)
     );
+}
+
+#[cfg(feature = "provisional-pq")]
+#[wasm_bindgen_test(unsupported = test)]
+fn provisional_key_packages_are_never_saved() {
+    // alice's only group uses the classical suite, but she has also published a key package for the provisional suite, whose private keys sit in her storage.
+    let mut deployment = Deployment::new();
+    let alice = deployment
+        .add_device("alice/laptop", Suite::Classical, 1)
+        .unwrap();
+    deployment
+        .publish_key_packages(&alice, Suite::ProvisionalHybridPq, 1)
+        .unwrap();
+    deployment.create_group(&alice, Suite::Classical).unwrap();
+    assert_eq!(
+        persist::export(deployment.client(&alice)).err(),
+        Some(PersistError::ProvisionalSuite)
+    );
+    // A device without provisional key material is saved as before.
+    let bob = deployment
+        .add_device("bob/laptop", Suite::Classical, 1)
+        .unwrap();
+    assert!(persist::export(deployment.client(&bob)).is_ok());
 }

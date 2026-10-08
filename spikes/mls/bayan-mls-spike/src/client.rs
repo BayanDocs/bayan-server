@@ -2,12 +2,13 @@
 //!
 //! Group settings follow ADR-0016: handshake messages (commits) use public framing so the server can validate them, application messages (updates) private framing; the role roster sits in the group context; Welcomes carry no ratchet tree, because newcomers fetch the public tree from the server, which tracks it anyway (see [`crate::validator`]); and every incoming commit, Welcome and update is checked against [`crate::policy`] before it is accepted.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use openmls::prelude::{
-    Capabilities, CredentialType, CredentialWithKey, ExtensionType, GroupId, KeyPackage, MlsGroup,
-    MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageOut,
-    PURE_PLAINTEXT_WIRE_FORMAT_POLICY, ProcessedMessageContent, StagedWelcome,
+    Capabilities, CredentialType, CredentialWithKey, ExtensionType, Extensions, GroupContext,
+    GroupId, KeyPackage, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn,
+    MlsMessageOut, PURE_PLAINTEXT_WIRE_FORMAT_POLICY, ProcessedMessageContent, StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
@@ -120,7 +121,11 @@ pub struct Client {
     groups: BTreeMap<Vec<u8>, MlsGroup>,
     /// The members and roles of each group's current epoch, read once per epoch rather than once per message.
     views: BTreeMap<Vec<u8>, GroupView>,
+    /// The members and roles of each group's previous epoch: a late update is judged by the roles of the epoch it was sent in as well as the current one, as the validator does.
+    previous_views: BTreeMap<Vec<u8>, GroupView>,
     past_epochs: usize,
+    /// Whether this device ever created key material for a provisional ciphersuite, such as a key package; [`crate::persist`] then refuses to save it.
+    provisional_key_material: Cell<bool>,
 }
 
 /// The capabilities every client announces in its leaf: basic credentials and the roster extension (the group context requires both).
@@ -171,7 +176,9 @@ impl Client {
             credential,
             groups: BTreeMap::new(),
             views: BTreeMap::new(),
+            previous_views: BTreeMap::new(),
             past_epochs,
+            provisional_key_material: Cell::new(false),
         })
     }
 
@@ -194,7 +201,9 @@ impl Client {
             credential,
             groups,
             views: BTreeMap::new(),
+            previous_views: BTreeMap::new(),
             past_epochs: DEFAULT_PAST_EPOCHS,
+            provisional_key_material: Cell::new(false),
         };
         let group_ids: Vec<Vec<u8>> = client.groups.keys().cloned().collect();
         for group_id in group_ids {
@@ -203,12 +212,20 @@ impl Client {
         Ok(client)
     }
 
-    /// Reads the members and roles of the group's current epoch into the cache. Called whenever the epoch changes.
+    /// Reads the members and roles of the group's current epoch into the cache. Called whenever the epoch changes. The group's context was checked when this client accepted it (see [`Roster::from_group_context`]), so the roster is only looked up here.
     fn refresh_view(&mut self, group_id: &[u8]) -> Result<(), ClientError> {
         let group = self.group(group_id)?;
-        let view = wire::view_of(group.members(), Roster::from_extensions(group.extensions()))?;
+        let view = wire::view_of(group.members(), Roster::find_in(group.extensions()))?;
         self.views.insert(group_id.to_vec(), view);
         Ok(())
+    }
+
+    /// Keeps the current epoch's members and roles as the previous epoch's, after a commit was merged, and reads the new ones.
+    fn advance_view(&mut self, group_id: &[u8]) -> Result<(), ClientError> {
+        if let Some(view) = self.views.remove(group_id) {
+            self.previous_views.insert(group_id.to_vec(), view);
+        }
+        self.refresh_view(group_id)
     }
 
     fn cached_view(&self, group_id: &[u8]) -> Result<&GroupView, ClientError> {
@@ -227,6 +244,12 @@ impl Client {
         &self.provider
     }
 
+    /// Whether this device ever created key material for a provisional ciphersuite, such as a key package (see [`crate::persist`]).
+    #[must_use]
+    pub fn holds_provisional_key_material(&self) -> bool {
+        self.provisional_key_material.get()
+    }
+
     pub(crate) fn signer(&self) -> &SignatureKeyPair {
         &self.signer
     }
@@ -237,6 +260,9 @@ impl Client {
     ///
     /// Returns an error if OpenMLS cannot build it.
     pub fn key_package(&self, suite: Suite) -> Result<Vec<u8>, ClientError> {
+        if suite.is_provisional() {
+            self.provisional_key_material.set(true);
+        }
         let bundle = KeyPackage::builder()
             .leaf_node_capabilities(capabilities())
             .build(
@@ -258,13 +284,34 @@ impl Client {
     /// Returns an error if the roster is malformed or OpenMLS fails.
     pub fn create_group(&mut self, suite: Suite) -> Result<Vec<u8>, ClientError> {
         let roster = Roster::new().with(self.device.user().clone(), crate::roster::Role::Owner);
+        self.create_group_with(suite, roster.group_context_extensions()?)
+    }
+
+    /// Creates a group whose context holds `extensions`, whatever they are: only for tests that play a misbehaving creator (for example one that adds an external sender), whose group the server and newcomers must refuse.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if OpenMLS refuses the extensions or the roster cannot be found in them.
+    pub fn create_group_with_context_unchecked(
+        &mut self,
+        suite: Suite,
+        extensions: Extensions<GroupContext>,
+    ) -> Result<Vec<u8>, ClientError> {
+        self.create_group_with(suite, extensions)
+    }
+
+    fn create_group_with(
+        &mut self,
+        suite: Suite,
+        extensions: Extensions<GroupContext>,
+    ) -> Result<Vec<u8>, ClientError> {
         let config = MlsGroupCreateConfig::builder()
             .ciphersuite(suite.ciphersuite())
             .wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
             .use_ratchet_tree_extension(false)
             .max_past_epochs(self.past_epochs)
             .capabilities(capabilities())
-            .with_group_context_extensions(roster.group_context_extensions()?)
+            .with_group_context_extensions(extensions)
             .build();
         let group_id = self.provider.rand().random_vec(16).map_err(mls)?;
         let group = MlsGroup::new_with_group_id(
@@ -395,6 +442,11 @@ impl Client {
                 .ok_or(PolicyViolation::MembershipMismatch)?;
             removed.push(index);
         }
+        // The roster is proposed only when it changes, and then in exactly the form every member checks for.
+        let new_roster = change
+            .roster
+            .clone()
+            .filter(|roster| *roster != before.roster);
         if check_policy {
             policy::check_commit(
                 &before,
@@ -402,13 +454,45 @@ impl Client {
                     committer: self.device.clone(),
                     added,
                     removed: change.remove.clone(),
-                    new_roster: change.roster.clone(),
+                    new_roster: new_roster.clone(),
                     path_identity: None,
                     unsupported: Vec::new(),
                 },
             )?;
         }
+        let extensions = new_roster
+            .map(|roster| roster.group_context_extensions())
+            .transpose()?;
+        self.stage_commit(
+            group_id,
+            key_packages,
+            removed,
+            extensions,
+            change.is_self_update(),
+        )
+    }
 
+    /// Prepares a commit whose only proposal replaces the group-context extensions with `extensions`, without checking the policy: only for tests that play a misbehaving client, for example one that keeps the roster but adds an external sender.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown group or if OpenMLS refuses the extensions.
+    pub fn commit_context_unchecked(
+        &mut self,
+        group_id: &[u8],
+        extensions: Extensions<GroupContext>,
+    ) -> Result<CommitOutput, ClientError> {
+        self.stage_commit(group_id, Vec::new(), Vec::new(), Some(extensions), false)
+    }
+
+    fn stage_commit(
+        &mut self,
+        group_id: &[u8],
+        key_packages: Vec<KeyPackage>,
+        removed: Vec<openmls::prelude::LeafNodeIndex>,
+        extensions: Option<Extensions<GroupContext>>,
+        self_update: bool,
+    ) -> Result<CommitOutput, ClientError> {
         let provider = &self.provider;
         let signer = &self.signer;
         let group = self
@@ -419,16 +503,12 @@ impl Client {
             .commit_builder()
             .propose_adds(key_packages)
             .propose_removals(removed);
-        if let Some(roster) = change
-            .roster
-            .as_ref()
-            .filter(|roster| **roster != before.roster)
-        {
+        if let Some(extensions) = extensions {
             builder = builder
-                .propose_group_context_extensions(roster.group_context_extensions()?)
+                .propose_group_context_extensions(extensions)
                 .map_err(mls)?;
         }
-        if change.is_self_update() {
+        if self_update {
             builder = builder.force_self_update(true);
         }
         let bundle = builder
@@ -457,7 +537,7 @@ impl Client {
             .get_mut(group_id)
             .ok_or(ClientError::UnknownGroup)?;
         group.merge_pending_commit(provider).map_err(mls)?;
-        self.refresh_view(group_id)
+        self.advance_view(group_id)
     }
 
     /// Drops this client's pending commit after the server refused it.
@@ -521,6 +601,7 @@ impl Client {
         let group_id = group.group_id().as_slice().to_vec();
         self.groups.insert(group_id.clone(), group);
         self.views.insert(group_id.clone(), view);
+        self.previous_views.remove(&group_id);
         Ok(group_id)
     }
 
@@ -628,10 +709,21 @@ impl Client {
         let processed = group.process_message(provider, message).map_err(mls)?;
         let sender_credential = processed.credential().clone();
         let sender = wire::device_of(&sender_credential)?;
+        let late = processed.epoch().as_u64() < group.epoch().as_u64();
         let received = match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(message) => {
                 let update = Update::from_bytes(&message.into_bytes())?;
                 policy::check_update(before, &sender, update.kind)?;
+                // An update sent before the last commit must also have been allowed then, as the validator requires: a role granted by that commit does not cover what was sent before it.
+                if late {
+                    let previous =
+                        self.previous_views
+                            .get(group_id)
+                            .ok_or(ClientError::Unsupported(
+                                "updates from before this device joined",
+                            ))?;
+                    policy::check_update(previous, &sender, update.kind)?;
+                }
                 return Ok(Received::Update { sender, update });
             }
             ProcessedMessageContent::StagedCommitMessage(staged) => {
@@ -662,8 +754,9 @@ impl Client {
             }
         ) {
             self.views.remove(group_id);
+            self.previous_views.remove(group_id);
         } else {
-            self.refresh_view(group_id)?;
+            self.advance_view(group_id)?;
         }
         Ok(received)
     }
