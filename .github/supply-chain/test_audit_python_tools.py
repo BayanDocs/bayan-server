@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import audit_python_tools  # noqa: E402
 
-# A stand-in for pip-audit. FAKE_PIP_AUDIT chooses how it behaves: "honest" reports the canary's vulnerabilities and finds none elsewhere, "silent" reports nothing at all, "vulnerable" also finds a vulnerability in the real files. Every call is logged as a JSON line to FAKE_PIP_AUDIT_LOG.
+# A stand-in for pip-audit. FAKE_PIP_AUDIT chooses how it behaves: "honest" reports the canary's vulnerabilities and finds none elsewhere, "silent" reports nothing at all, "vulnerable" also finds a vulnerability in deps/requirements-tools.txt, and "broken" fails on that file the way pip-audit does when it cannot audit one (exit status 1, an error message, no report). Every call is logged as a JSON line to FAKE_PIP_AUDIT_LOG.
 FAKE = textwrap.dedent(
     """\
     import json, os, sys
@@ -28,16 +28,21 @@ FAKE = textwrap.dedent(
     with open(os.environ["FAKE_PIP_AUDIT_LOG"], "a", encoding="utf-8") as log:
         log.write(json.dumps(arguments) + "\\n")
     mode = os.environ["FAKE_PIP_AUDIT"]
-    if "--format" in arguments:
-        vulns = [] if mode == "silent" else [{"id": "PYSEC-2026-1471", "fix_versions": ["3.1.6"], "aliases": [], "description": ""}]
-        report = {"dependencies": [{"name": "jinja2", "version": "3.1.4", "vulns": vulns}], "fixes": []}
-        with open(arguments[arguments.index("--output") + 1], "w", encoding="utf-8") as output:
-            json.dump(report, output)
-        sys.exit(1 if vulns else 0)
-    if mode == "vulnerable":
-        print("Found 1 known vulnerability in 1 package")
+    files = [arguments[index + 1] for index, argument in enumerate(arguments) if argument == "--requirement"]
+    canary = any(name.endswith("pip-audit-canary.txt") for name in files)
+    if mode == "broken" and files == ["deps/requirements-tools.txt"]:
+        print("ERROR:pip_audit._cli:package jinja2 has duplicate requirements", file=sys.stderr)
         sys.exit(1)
-    print("No known vulnerabilities found")
+    if canary:
+        vulns = [] if mode == "silent" else [{"id": "PYSEC-2026-1471", "fix_versions": ["3.1.6"], "aliases": [], "description": ""}]
+        dependencies = [{"name": "jinja2", "version": "3.1.4", "vulns": vulns}]
+    elif mode == "vulnerable" and files == ["deps/requirements-tools.txt"]:
+        dependencies = [{"name": "cmake", "version": "4.1.0", "vulns": [{"id": "PYSEC-2026-0001", "fix_versions": ["4.1.1"], "aliases": [], "description": ""}]}]
+    else:
+        dependencies = [{"name": "reuse", "version": "6.2.0", "vulns": []}]
+    with open(arguments[arguments.index("--output") + 1], "w", encoding="utf-8") as output:
+        json.dump({"dependencies": dependencies, "fixes": []}, output)
+    sys.exit(1 if any(dependency["vulns"] for dependency in dependencies) else 0)
     """
 )
 
@@ -93,22 +98,46 @@ class AuditTests(unittest.TestCase):
             [".github/reuse/build-requirements.txt", ".github/reuse/requirements.txt", "deps/requirements-tools.txt"],
         )
 
-    def test_audits_every_file_after_the_canary(self) -> None:
+    def test_audits_every_file_in_a_run_of_its_own_after_the_canary(self) -> None:
+        # One run per file: two files may pin the same package at different versions, which pip-audit refuses within one run.
         status, output, calls = self.run_main("honest")
         self.assertEqual(status, 0, output)
-        self.assertEqual(len(calls), 2, calls)
-        canary, audit = calls
+        self.assertEqual(len(calls), 4, calls)
+        canary, *audits = calls
         self.assertIn(str(audit_python_tools.CANARY), canary)
-        self.assertIn("--disable-pip", audit)
-        self.assertIn("--require-hashes", audit)
-        self.assertIn("--strict", audit)
-        audited = sorted(audit[index + 1] for index, argument in enumerate(audit) if argument == "--requirement")
-        self.assertEqual(audited, [".github/reuse/build-requirements.txt", ".github/reuse/requirements.txt", "deps/requirements-tools.txt"])
+        audited = []
+        for audit in audits:
+            for option in ["--disable-pip", "--require-hashes", "--strict", "--format", "--output"]:
+                self.assertIn(option, audit)
+            files = [audit[index + 1] for index, argument in enumerate(audit) if argument == "--requirement"]
+            self.assertEqual(len(files), 1, audit)
+            audited += files
+        self.assertEqual(sorted(audited), [".github/reuse/build-requirements.txt", ".github/reuse/requirements.txt", "deps/requirements-tools.txt"])
+        self.assertIn("No known vulnerabilities", output)
 
     def test_fails_when_a_pin_is_vulnerable(self) -> None:
         status, output, _ = self.run_main("vulnerable")
         self.assertEqual(status, 1, output)
         self.assertIn("known vulnerability", output)
+        self.assertIn("deps/requirements-tools.txt: cmake 4.1.0: PYSEC-2026-0001 (fixed in 4.1.1)", output)
+
+    # pip-audit exits with status 1 when it cannot audit a file, too; that used to be reported as "A pinned Python tool has a known vulnerability" (found in the review of X-003).
+    def test_reports_a_file_that_pip_audit_cannot_audit_as_an_error(self) -> None:
+        status, output, calls = self.run_main("broken")
+        self.assertEqual(status, 2, output)
+        self.assertIn("could not audit deps/requirements-tools.txt", output)
+        self.assertIn("duplicate requirements", output)
+        self.assertNotIn("known vulnerability", output)
+        self.assertEqual(len(calls), 4, "the other files are still audited")
+
+    def test_reads_the_report_strictly(self) -> None:
+        report = lambda vulns: json.dumps({"dependencies": [{"name": "cmake", "version": "4.1.0", "vulns": vulns}], "fixes": []})  # noqa: E731
+        found = audit_python_tools.vulnerabilities("r.txt", 1, report([{"id": "X", "fix_versions": []}]), "")
+        self.assertEqual(found, ["r.txt: cmake 4.1.0: X (fixed in no fixed release yet)"])
+        self.assertEqual(audit_python_tools.vulnerabilities("r.txt", 0, report([]), ""), [])
+        for status, text in [(1, None), (1, report([])), (0, report([{"id": "X"}])), (2, report([])), (1, "not json"), (1, "[]"), (1, json.dumps({"dependencies": [1]}))]:
+            with self.subTest(status=status, text=text), self.assertRaises(audit_python_tools.AuditError):
+                audit_python_tools.vulnerabilities("r.txt", status, text, "")
 
     def test_refuses_to_trust_a_pip_audit_that_finds_nothing(self) -> None:
         status, output, calls = self.run_main("silent")
