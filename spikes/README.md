@@ -7,6 +7,7 @@ A spike is a time-boxed experiment that answers a design question before product
 - No crate under `crates/` may depend on spike code, so it can never reach the server binary or the container image. The Docker build copies only `crates/` and `xtask/`.
 - A spike with Rust code is its own Cargo workspace with its own `Cargo.lock`. Cargo's lockfile records every optional dependency of every package, so a spike's dependencies could otherwise change the versions the server is built with (for SRV-002, OpenMLS's optional SQLite storage would have pinned an older SQLite into the server).
 - Code that proves itself moves into a production crate through a work package, with tests and review. SRV-002's findings feed the `bayan-mls` crate in bayan-core.
+- Spike code is AGPL-3.0-or-later, like the rest of this repository, while bayan-core is GPL-3.0-or-later with the BayanDocs App Store Permission. BayanDocs has no contributor license agreement, so contributions cannot be relicensed ([LICENSING.md](https://github.com/BayanDocs/docs/blob/HEAD/LICENSING.md)): production crates are written from a spike's report, not copied from its code, unless the owner decides otherwise.
 
 ## Spikes are still checked
 
