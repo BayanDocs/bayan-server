@@ -1,0 +1,4 @@
+# A deliberately vulnerable pin that is never installed: jinja2 3.1.4 has published vulnerabilities, fixed in 3.1.5 and 3.1.6. The supply-chain workflow checks that pip-audit reports them, which proves that pip-audit still finds vulnerabilities at all; otherwise an audit could pass without checking anything, for example after a change to the vulnerability service it asks.
+# The file name leaves out "requirements" on purpose, so that neither the audit of the real requirements files nor GitHub's dependency graph takes it for one.
+jinja2==3.1.4 \
+    --hash=sha256:bc5dd2abb727a5319567b7a813e6a2e7318c39f4f487cfe6c89c6f9c7d25197d
