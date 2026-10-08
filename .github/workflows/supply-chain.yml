@@ -1,0 +1,69 @@
+# The supply-chain checks of ADR-0017 that are the same in every BayanDocs repository (work package X-003), on every pull request, on pushes to main and nightly:
+#   - "No update bots": fails when configuration for Dependabot version updates, Renovate or a similar service appears (rule 1). The check is .github/supply-chain/check_update_bots.py (Python standard library only); its tests run first.
+#   - "pip-audit": the Python tools that CI installs from hash-pinned requirements files (every *requirements*.txt that Git tracks) have no known vulnerabilities (the "Python tools in CI" row and rule 7). pip-audit itself is installed from .github/supply-chain/pip-audit-requirements.txt (exact versions, SHA-256 hashes, wheels only), and a canary proves that it still finds a known vulnerability before its "nothing found" is believed.
+# The nightly run notices new advisories against pins that did not change. The checks that differ between repositories (exact pins and the age of new Cargo.lock entries, the pnpm settings and lockfile integrity, the Qt release date) are part of each repository's own verification gate.
+# Workflow rules (ADR-0017): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository, no credentials kept after checkout, timeouts, and the pull_request trigger only (never pull_request_target).
+# This file and .github/supply-chain/ are identical in all five BayanDocs repositories: change them in all of them together.
+name: Supply chain
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  # Only a newer push to the same pull request cancels a run; the nightly run never cancels a run for a push to main, or the other way round.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  update-bots:
+    name: No update bots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # check out the repository
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the update-bot check
+        run: python3 -m unittest discover --start-directory .github/supply-chain --pattern 'test_check_update_bots.py'
+
+      - name: No update-bot configuration (ADR-0017 rule 1)
+        run: python3 .github/supply-chain/check_update_bots.py
+
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the repository
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the audit script
+        run: python3 -m unittest discover --start-directory .github/supply-chain --pattern 'test_audit_python_tools.py'
+
+      # Into a virtual environment outside the checkout. Wheels only, so no package code runs while it is installed.
+      - name: Install pip-audit (exact versions, SHA-256 hashes checked)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pip-audit"
+          "$RUNNER_TEMP/pip-audit/bin/pip" install --no-input --disable-pip-version-check --require-hashes --only-binary :all: --requirement .github/supply-chain/pip-audit-requirements.txt
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" --version
+
+      - name: No known vulnerabilities in the hash-pinned Python tools (canary first)
+        run: python3 .github/supply-chain/audit_python_tools.py --pip-audit "$RUNNER_TEMP/pip-audit/bin/pip-audit"

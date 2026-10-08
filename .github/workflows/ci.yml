@@ -1,4 +1,4 @@
-# Continuous integration for bayan-server (SRV-001): the verification gate, the PostgreSQL integration test, and the container build, smoke test and vulnerability scan; and for the MLS spike (SRV-002, spikes/mls) its tests in WebAssembly.
+# Continuous integration for bayan-server (SRV-001): the supply-chain checks first (X-003), then the verification gate, the PostgreSQL integration test, and the container build, smoke test and vulnerability scan, on every pull request, on pushes to main and nightly; and for the MLS spike (SRV-002, spikes/mls) its tests in WebAssembly.
 # Conventions (ADR-0017, X-002): every action pinned to a full commit SHA with its version in a comment, no permissions beyond reading the repository, timeouts on every job, no credentials left in the checkout, first-party actions only.
 name: CI
 
@@ -6,13 +6,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Every night, so that a new security advisory against a crate on main (cargo deny) or a new vulnerability in the image (grype) is noticed even when nobody pushes (ADR-0017 rule 7).
+    - cron: "37 3 * * *"
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a newer push to the same pull request cancels a run; the nightly run never cancels a run for a push to main, or the other way round.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,6 +24,26 @@ env:
   GRYPE_CHECK_FOR_APP_UPDATE: "false"
 
 jobs:
+  supply-chain:
+    # First, and needed by the jobs that build: no code of a dependency these checks reject (its build script, procedural macros or tests) may run before they pass. They compile only xtask, which has no dependencies. The verification gate runs them again as its first step.
+    name: Supply-chain checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The full history: `cargo xtask check-lockfile-age` compares Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: Every dependency is pinned exactly (cargo xtask check-exact-pins)
+        run: cargo xtask check-exact-pins
+      - name: Cargo builds exactly what Cargo.lock lists, and every new package version is at least 24 hours old, with the checksum crates.io published (cargo xtask check-lockfile-age)
+        run: cargo xtask check-lockfile-age
+
   verify:
     name: Verification gate
     runs-on: ubuntu-24.04
@@ -29,6 +53,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The full history: `cargo xtask check-lockfile-age` compares Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
+          fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
@@ -47,6 +73,7 @@ jobs:
 
   postgres:
     name: PostgreSQL integration
+    needs: supply-chain
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -90,6 +117,7 @@ jobs:
 
   container:
     name: Container image
+    needs: supply-chain
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

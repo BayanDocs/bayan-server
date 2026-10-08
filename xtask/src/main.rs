@@ -3,6 +3,7 @@
 //! - `verify`: the verification gate that CI runs and that must pass before every push.
 //! - `sqlx-prepare [--check]`: regenerates (or, with `--check`, verifies) the committed sqlx query metadata against scratch SQLite and PostgreSQL databases.
 //! - `test-postgres`: runs the PostgreSQL integration test against the server named by `BAYAN_TEST_POSTGRES_URL`.
+//! - `check-exact-pins` and `check-lockfile-age [--base <revision>]`: the supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003; see `supply_chain/`, which is identical in bayan-core). `verify` runs both.
 //! - `mls-spike-wasm [node | chromium]`, `mls-spike-bench <native | node | chromium>` and `mls-spike-wasm-size`: the WebAssembly tests, measurements and size report of the MLS spike (`spikes/mls`, work package SRV-002; see [`mls_spike`]).
 //!
 //! It uses only the standard library and runs the real tools with [`std::process::Command`].
@@ -19,8 +20,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 mod mls_spike;
+mod supply_chain;
 
-const USAGE: &str = "usage: cargo xtask <verify | sqlx-prepare [--check] | test-postgres | mls-spike-wasm [node | chromium] | mls-spike-bench <native | node | chromium> | mls-spike-wasm-size>";
+const USAGE: &str = "usage: cargo xtask <verify | sqlx-prepare [--check] | test-postgres | check-exact-pins | check-lockfile-age [--base <revision>] | mls-spike-wasm [node | chromium] | mls-spike-bench <native | node | chromium> | mls-spike-wasm-size>";
 
 /// The backend crates whose queries sqlx checks at compile time. `sqlx-prepare` compiles each one on its own against its own database, so a single `DATABASE_URL` at a time is enough.
 const SQLITE: &str = "bayan-db-sqlite";
@@ -40,6 +42,14 @@ fn main() -> ExitCode {
         ["sqlx-prepare"] => sqlx_prepare(false),
         ["sqlx-prepare", "--check"] => sqlx_prepare(true),
         ["test-postgres"] => test_postgres(),
+        ["check-exact-pins"] => workspace_root()
+            .and_then(|root| supply_chain::exact_pins::check(&root, &mut |line| report(line))),
+        ["check-lockfile-age"] => workspace_root().and_then(|root| {
+            supply_chain::lockfile_age::check(&root, None, &mut |line| report(line))
+        }),
+        ["check-lockfile-age", "--base", base] => workspace_root().and_then(|root| {
+            supply_chain::lockfile_age::check(&root, Some(base), &mut |line| report(line))
+        }),
         ["mls-spike-wasm", hosts @ ..] => {
             workspace_root().and_then(|root| mls_spike::wasm_tests(&root, hosts))
         }
@@ -60,6 +70,8 @@ fn main() -> ExitCode {
 
 /// The verification gate, in order. Every step must pass.
 fn verify() -> Result {
+    // First, so that no code of a dependency these checks reject is compiled or run (build scripts, procedural macros, tests) before they fail; they build nothing themselves.
+    supply_chain_checks()?;
     step("format", cargo(&["fmt", "--all", "--check"]))?;
     step(
         "lint",
@@ -95,17 +107,24 @@ fn verify() -> Result {
     )?;
     // The MLS spike (spikes/mls) is a workspace of its own, checked the same way.
     mls_spike::verify_steps(&workspace_root()?)?;
-    supply_chain_checks()?;
     eprintln!("xtask: verify passed");
     Ok(())
 }
 
-/// Hook for the supply-chain checks of work package X-003 (Cargo.lock publish-age check, update-bot ban). X-003 implements them here so that `verify` runs them everywhere.
+/// The supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003, `supply_chain/`): every dependency is pinned exactly, Cargo builds exactly what `Cargo.lock` lists, and every package version that the change adds to `Cargo.lock` is at least 24 hours old and has the checksum crates.io published. The age check compares with the merge base of the branch the change goes into (`origin/<GITHUB_BASE_REF>` in a pull request on GitHub Actions, otherwise `origin/main`), so it needs the full Git history; it asks crates.io only when `Cargo.lock` changed, and `cargo metadata` downloads the crate files that Cargo's cache lacks, without building anything. The update-bot check and pip-audit run in the supply-chain workflow (`.github/workflows/supply-chain.yml`).
 fn supply_chain_checks() -> Result {
+    let root = workspace_root()?;
+    eprintln!("xtask: check-exact-pins: every dependency is pinned exactly (ADR-0017 rule 5)");
+    supply_chain::exact_pins::check(&root, &mut |line| report(line))?;
     eprintln!(
-        "xtask: supply-chain checks: not implemented yet (work package X-003 adds them here)"
+        "xtask: check-lockfile-age: Cargo builds exactly what Cargo.lock lists, and every package version added to it was published at least 24 hours before it was added (ADR-0017 rule 4), with the checksum crates.io published"
     );
-    Ok(())
+    supply_chain::lockfile_age::check(&root, None, &mut |line| report(line))
+}
+
+/// Prints one line of what a supply-chain check found.
+fn report(line: &str) {
+    eprintln!("xtask:   {line}");
 }
 
 /// Regenerates the sqlx query metadata of every backend crate, or with `check` verifies the committed metadata is current.
