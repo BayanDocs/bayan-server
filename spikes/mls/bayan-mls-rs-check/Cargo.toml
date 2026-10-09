@@ -1,0 +1,23 @@
+[package]
+name = "bayan-mls-rs-check"
+description = "Spike SRV-002, time-boxed fallback check: the same MLS flows with mls-rs, natively and in WebAssembly. Experimental code, never part of the server binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+mls-rs.workspace = true
+mls-rs-crypto-rustcrypto.workspace = true
+
+# In WebAssembly the provider's randomness comes from Web Crypto through getrandom 0.2's `js` feature (the provider's `browser` feature).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mls-rs-crypto-rustcrypto = { workspace = true, features = ["browser"] }
+
+[dev-dependencies]
+wasm-bindgen-test.workspace = true
+
+[lints]
+workspace = true

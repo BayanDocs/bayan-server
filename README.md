@@ -24,7 +24,7 @@ Or with Docker Compose for development: `docker compose up --build` (add `--prof
 
 ## Development
 
-You need the Rust toolchain pinned in `rust-toolchain.toml` (rustup installs it automatically) and the tools from `scripts/dev-setup.sh` (cargo-deny, grype).
+You need the Rust toolchain pinned in `rust-toolchain.toml` (rustup installs it automatically) and the tools from `scripts/dev-setup.sh`: cargo-deny and grype, and for the MLS spike's WebAssembly tests wasm-bindgen, Node.js, Chromium's headless shell and chromedriver. The script is idempotent, installs every tool at a pinned version and checks every download against a pinned SHA-256 hash; `scripts/dev-setup.sh <tool>…` installs only the tools named.
 
 ```sh
 cargo xtask verify                 # the full verification gate: format, lint, test, docs, cargo deny
@@ -35,6 +35,10 @@ scripts/container-smoke-test.sh bayan-server                          # check a 
 ```
 
 Builds never need a database: query metadata is committed in `crates/bayan-db-*/.sqlx/`. See [AGENTS.md](AGENTS.md) for the rules and workflow.
+
+[spikes/](spikes/README.md) holds time-boxed experiments that are never part of the server, such as the MLS spike of work package SRV-002 ([report](spikes/mls/REPORT.md)): `cargo xtask mls-spike-wasm` runs its tests in WebAssembly in Node.js and Chromium, after `scripts/dev-setup.sh` has installed the pinned tools.
+
+**BayanDocs cloud sessions:** the cloud environment's setup script will run `scripts/dev-setup.sh` once the batch of environment changes collected in [BayanDocs/docs#7](https://github.com/BayanDocs/docs/issues/7) is applied; until then, run it yourself at the start of a session.
 
 ## Where things are decided
 

@@ -1,4 +1,4 @@
-# Continuous integration for bayan-server (SRV-001): the supply-chain checks first (X-003), then the verification gate, the PostgreSQL integration test, and the container build, smoke test and vulnerability scan, on every pull request, on pushes to main and nightly.
+# Continuous integration for bayan-server (SRV-001): the supply-chain checks first (X-003), then the verification gate, the PostgreSQL integration test, and the container build, smoke test and vulnerability scan, on every pull request, on pushes to main and nightly; and for the MLS spike (SRV-002, spikes/mls) its tests in WebAssembly.
 # Conventions (ADR-0017, X-002): every action pinned to a full commit SHA with its version in a comment, no permissions beyond reading the repository, timeouts on every job, no credentials left in the checkout, first-party actions only.
 name: CI
 
@@ -25,7 +25,7 @@ env:
 
 jobs:
   supply-chain:
-    # First, and needed by the jobs that build: no code of a dependency these checks reject (its build script, procedural macros or tests) may run before they pass. They compile only xtask, which has no dependencies. The verification gate runs them again as its first step.
+    # First, and needed by the jobs that build: no code of a dependency these checks reject (its build script, procedural macros or tests) may run before they pass. They compile only xtask, which has no dependencies. check-exact-pins covers the server's workspace and the MLS spike's (spikes/mls, which has its own Cargo.lock); check-lockfile-age covers the server's Cargo.lock only (xtask/src/main.rs says why). The verification gate runs them again as its first step.
     name: Supply-chain checks
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -66,7 +66,8 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             target/
-          key: verify-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+            spikes/mls/target/
+          key: verify-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'spikes/mls/Cargo.lock') }}
       - name: cargo xtask verify
         run: cargo xtask verify
 
@@ -135,3 +136,28 @@ jobs:
         run: grype bayan-server:ci --fail-on high
       - name: Vulnerability scan of the Rust crates compiled into the binary (grype)
         run: grype file:Cargo.lock --fail-on high
+
+  mls-spike:
+    name: MLS spike in WebAssembly (Node.js and Chromium)
+    runs-on: ubuntu-24.04
+    needs: supply-chain
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain and its WebAssembly target (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: Install the pinned WebAssembly test tools (scripts/dev-setup.sh)
+        run: scripts/dev-setup.sh wasm-bindgen node chromedriver chrome-headless-shell
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            spikes/mls/target/
+          key: mls-spike-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'spikes/mls/Cargo.lock') }}
+      - name: The spike's tests in Node.js and in headless Chromium (cargo xtask mls-spike-wasm)
+        run: cargo xtask mls-spike-wasm

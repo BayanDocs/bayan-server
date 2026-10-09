@@ -4,4 +4,4 @@ allow-expect-in-tests = true
 allow-print-in-tests = true
 allow-dbg-in-tests = false
 # Project names that are not code; ".." keeps Clippy's built-in list.
-doc-valid-idents = ["BayanDocs", "..", "PostgreSQL", "SQLite", "WebSockets"]
+doc-valid-idents = ["BayanDocs", "..", "OpenMLS", "PostgreSQL", "SQLite", "WebSockets"]

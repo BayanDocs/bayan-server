@@ -1,0 +1,46 @@
+[package]
+name = "bayan-mls-spike"
+description = "Spike SRV-002: MLS (OpenMLS) for CRDT updates, natively and in WebAssembly. Experimental code, never part of the server binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# rlib for the tests and the benchmark program; cdylib so that `cargo xtask mls-spike-wasm-size` can measure what a WebAssembly client would download.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# PROVISIONAL post-quantum MLS ciphersuites from draft-ietf-mls-pq-ciphersuites. The spike uses code point 0x004F (ML-KEM-768 + X25519 with AES-128-GCM, SHA-256 and Ed25519) for measurements only: IANA has not assigned it, so groups using it are never persisted (ADR-0016 Decision 2 and its amendment of 2026-10-04).
+provisional-pq = [
+    "openmls/draft-ietf-mls-pq-ciphersuites",
+    "openmls_basic_credential/draft-ietf-mls-pq-ciphersuites",
+    "openmls_rust_crypto/draft-ietf-mls-pq-ciphersuites",
+    "openmls_traits/draft-ietf-mls-pq-ciphersuites",
+]
+
+[dependencies]
+openmls.workspace = true
+openmls_basic_credential.workspace = true
+openmls_rust_crypto.workspace = true
+openmls_traits.workspace = true
+thiserror.workspace = true
+wasm-bindgen.workspace = true
+web-time.workspace = true
+
+# In WebAssembly, randomness and the clock come from the JavaScript host: OpenMLS's `js` feature (getrandom 0.4 through Web Crypto, and web-time), and getrandom 0.2's `js` feature for the RustCrypto provider's generator.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_02 = { workspace = true, features = ["js"] }
+openmls = { workspace = true, features = ["js"] }
+
+[dev-dependencies]
+wasm-bindgen-test.workspace = true
+
+# The WebAssembly benchmark reports which JavaScript host it ran in.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+js-sys.workspace = true
+
+[lints]
+workspace = true

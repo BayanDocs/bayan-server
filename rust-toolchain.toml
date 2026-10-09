@@ -3,3 +3,5 @@
 channel = "1.99.0"
 components = ["clippy", "rustfmt"]
 profile = "minimal"
+# The MLS spike (spikes/mls) also runs its tests compiled to WebAssembly.
+targets = ["wasm32-unknown-unknown"]
