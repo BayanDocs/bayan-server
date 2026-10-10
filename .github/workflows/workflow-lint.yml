@@ -1,5 +1,5 @@
 # Lints the GitHub Actions workflows of this repository (work package X-002; ADR-0017, threat T16 in docs/specs/threat-model.md), on every pull request, on pushes to main and nightly, so that a newly published advisory against a pinned action is noticed even when no workflow changes:
-#   - zizmor, a static analyser for workflows, must report no findings at its default settings. It runs without any configuration file or ignore comment (--no-config --no-ignores), so nothing in the repository except this file can silence it, and with the job's read-only token, which switches on its online audits: actions with known vulnerabilities (Dependabot does not alert on actions pinned to a commit), commits that come from a fork rather than the action's own repository, and version comments that do not match their commit.
+#   - zizmor, a static analyser for workflows, must report no findings at its default settings. It reads no configuration file (--no-config), obeys no ignore comment (--no-ignores), and audits every workflow even when a .gitignore file names it (--collect=all; by default zizmor skips such files, so a committed .gitignore could hide a workflow from it), so that nothing in the repository except this file can silence it. It runs with the job's read-only token, which switches on its online audits: actions with known vulnerabilities (Dependabot does not alert on actions pinned to a commit), commits that come from a fork rather than the action's own repository, and version comments that do not match their commit.
 #   - pinact checks that every action is pinned to a full commit SHA and that each pinned commit is at least a day old (ADR-0017 rule 4). It runs with an empty configuration of its own, so that a configuration file in the repository cannot exempt an action.
 # Both tools are pinned like the BayanDocs cloud environment's (docs/scripts/cloud-environment-setup.sh), and docs/scripts/tests/test_repository_baseline.py keeps the pins equal: zizmor from .github/workflow-lint/requirements.txt with its SHA-256 hash, pinact as the release archive whose SHA-256 is below.
 # Workflow conventions (AGENTS.md): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository, no credentials kept after checkout, a timeout, and the pull_request trigger (never pull_request_target).
@@ -60,11 +60,11 @@ jobs:
           # An empty configuration in pinact 4's format. Given with --config and as the global configuration, it keeps pinact from reading .pinact.yaml or .github/pinact.yaml from the repository, or a configuration from the home folder.
           printf 'version: 3\n' > pinact.yaml
 
-      # --strict-collection fails on a workflow that zizmor cannot parse, instead of skipping it with a warning.
+      # --collect=all audits files that a .gitignore names too, and --strict-collection fails on a workflow that zizmor cannot parse, instead of skipping it with a warning.
       - name: zizmor finds nothing (default settings, online audits)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: '"$RUNNER_TEMP/zizmor/bin/zizmor" --no-config --no-ignores --strict-collection --no-progress .'
+        run: '"$RUNNER_TEMP/zizmor/bin/zizmor" --no-config --no-ignores --collect=all --strict-collection --no-progress .'
 
       # Also after a zizmor failure, so that one run shows every problem.
       - name: Every action is pinned to a full commit SHA that is at least a day old (pinact)
