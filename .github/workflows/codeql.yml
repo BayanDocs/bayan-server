@@ -1,0 +1,117 @@
+# Scans this repository with CodeQL, GitHub's static analysis, on every pull request, on pushes to main and weekly, and uploads the results to GitHub code scanning (work package X-002). Alerts appear under Security → Code scanning, and a pull request shows the ones it would add.
+# Languages: GitHub Actions (the workflows), Python (the checks in .github/) and Rust (the server's workspace). The MLS spike (spikes/mls), a time-boxed experiment with a workspace and Cargo.lock of its own that the lockfile-age check does not cover yet, is not scanned.
+# None of these languages needs a build, but CodeQL's Rust extractor runs `cargo check` on the workspace to learn what build scripts and procedural macros produce, which runs code of the dependencies. The Rust job therefore first runs the same supply-chain checks as ci.yml's first job, so that no dependency they would reject runs here either. With CodeQL 2.27.2 that `cargo check` stops at once: the extractor installs and uses its own Rust version (1.98.1, with rustup), older than the workspace's rust-version (1.99), so CodeQL reads macros without expanding them.
+# CodeQL's engine, the CodeQL bundle, is downloaded by this workflow and checked against the SHA-256 that its release publishes, then handed to the CodeQL action, which would otherwise download it without checking a hash. Keep CODEQL_VERSION equal to the bundle that the pinned github/codeql-action names in its src/defaults.json (version 4.38.3 names 2.27.2), and update both together in the monthly dependency session, in all five BayanDocs repositories.
+# Workflow conventions (AGENTS.md): GitHub's own actions only, pinned to full commit SHAs with the version in a comment; per-job permissions; no credentials kept after checkout; timeouts; the pull_request trigger (never pull_request_target).
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 6 * * 2"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  # Only a newer push to the same pull request cancels a run; the weekly run never cancels a run for a push to main, or the other way round.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The CodeQL bundle 2.27.2 (codeql-bundle-v2.27.2, published 2026-10-06). The SHA-256 is the one in the release's codeql-bundle-linux64.tar.zst.checksum.txt.
+  CODEQL_VERSION: 2.27.2
+  CODEQL_BUNDLE_SHA256: f24406b1557c506133db1f972758ee64f14eb3587a53367a1bd737f24495ea97
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload the results to code scanning
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the CodeQL bundle (pinned version, SHA-256 checked)
+        run: |
+          bundle="$RUNNER_TEMP/codeql-bundle-linux64.tar.zst"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 --output "$bundle" \
+            "https://github.com/github/codeql-action/releases/download/codeql-bundle-v$CODEQL_VERSION/codeql-bundle-linux64.tar.zst"
+          echo "$CODEQL_BUNDLE_SHA256  $bundle" | sha256sum --check --strict
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          tools: ${{ runner.temp }}/codeql-bundle-linux64.tar.zst
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: /language:${{ matrix.language }}
+
+  rust:
+    name: CodeQL (rust)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload the results to code scanning
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The full history: `cargo xtask check-lockfile-age` compares Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Every dependency is pinned exactly (cargo xtask check-exact-pins)
+        run: cargo xtask check-exact-pins
+
+      - name: Cargo builds exactly what Cargo.lock lists, and every new package version is at least 24 hours old, with the checksum crates.io published (cargo xtask check-lockfile-age)
+        run: cargo xtask check-lockfile-age
+
+      - name: Download the CodeQL bundle (pinned version, SHA-256 checked)
+        run: |
+          bundle="$RUNNER_TEMP/codeql-bundle-linux64.tar.zst"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 --output "$bundle" \
+            "https://github.com/github/codeql-action/releases/download/codeql-bundle-v$CODEQL_VERSION/codeql-bundle-linux64.tar.zst"
+          echo "$CODEQL_BUNDLE_SHA256  $bundle" | sha256sum --check --strict
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: rust
+          build-mode: none
+          tools: ${{ runner.temp }}/codeql-bundle-linux64.tar.zst
+          config: |
+            paths-ignore:
+              - spikes/mls
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: /language:rust

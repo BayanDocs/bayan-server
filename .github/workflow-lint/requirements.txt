@@ -1,0 +1,5 @@
+# zizmor, the static analyser for GitHub Actions workflows, for the workflow-lint workflow (.github/workflows/workflow-lint.yml): an exact version with its SHA-256 hash (ADR-0017), the same pin as req_zizmor in the BayanDocs cloud environment (docs/scripts/cloud-environment-setup.sh), so that CI lints with the zizmor that agent sessions use (docs/scripts/tests/test_repository_baseline.py checks that the two agree).
+# The wheel for Linux x86-64 (manylinux_2_28), where the workflow runs; zizmor is one compiled program with no Python dependencies. zizmor 1.30.1 was published on 2026-09-09; MIT license; a standalone CI tool that is never shipped.
+# Changed only in the monthly dependency session, together with req_zizmor, in all five BayanDocs repositories. The supply-chain workflow audits this file with pip-audit, like every other requirements file.
+zizmor==1.30.1 \
+    --hash=sha256:eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e

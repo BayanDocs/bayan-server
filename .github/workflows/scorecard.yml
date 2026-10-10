@@ -1,0 +1,114 @@
+# Runs OpenSSF Scorecard (https://scorecard.dev) on this repository every week and after every push to main, and uploads its findings to GitHub code scanning (work package X-002). Scorecard rates a repository's security practices from 0 to 10 per check (pinned dependencies, token permissions, branch protection, code review, static analysis and more), and an aggregate score. The job summary of each run shows every check's score; the alerts appear under Security → Code scanning. The results are information, not a gate: a low score fails nothing.
+# Scorecard runs as its command-line program, pinned by version and checked against the SHA-256 that its release publishes, not through the ossf/scorecard-action action: that action runs a container image that it names only by a tag (ghcr.io/ossf/scorecard-action:v2.4.4), which can be moved to different code, so pinning the action's commit would not pin what runs. This way no third-party action runs here at all. (Publishing results to the public Scorecard API, for a badge, needs that action and is not done.)
+# Two jobs, so that Scorecard, which is third-party code, never holds a token that can write: the first runs it with a read-only token, and the second, which runs only GitHub's own actions, uploads the results to code scanning.
+# .github/scorecard/policy.yml chooses which checks raise alerts. Workflow conventions as in AGENTS.md. This file and .github/scorecard/ are identical in all five BayanDocs repositories: change them in all of them together.
+name: Scorecard
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+# One run at a time; a newer one waits rather than cancelling a run halfway.
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the policy file; Scorecard reads the repository through GitHub's API with this token
+      actions: read # Scorecard's CI-Tests and SAST checks look at the repository's workflow runs
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Scorecard 5.5.0, published 2026-04-23. The SHA-256 is the one in the release's scorecard_checksums.txt.
+      SCORECARD_VERSION: 5.5.0
+      SCORECARD_SHA256: 83b90a05c1540ef1390db1cd5711e5fd04be9c1d8537fb84d39d02092d6a8dff
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Scorecard (pinned version, SHA-256 checked)
+        run: |
+          mkdir "$RUNNER_TEMP/scorecard" "$RUNNER_TEMP/results"
+          cd "$RUNNER_TEMP/scorecard" || exit 1
+          archive="scorecard_${SCORECARD_VERSION}_linux_amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 --output "$archive" \
+            "https://github.com/ossf/scorecard/releases/download/v$SCORECARD_VERSION/$archive"
+          echo "$SCORECARD_SHA256  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" scorecard
+          ./scorecard version
+
+      # Scorecard reads the repository as it is on GitHub, at the head of the default branch. It writes its results even when a check could not run (for example because the token may not read a setting), and then exits with an error; that check then scores -1 in the summary and is named in a warning, while a missing or unreadable result fails the job.
+      - name: Run Scorecard
+        env:
+          GITHUB_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          scorecard="$RUNNER_TEMP/scorecard/scorecard"
+          results="$RUNNER_TEMP/results"
+          status=0
+          "$scorecard" --repo="github.com/$GITHUB_REPOSITORY" --format=json --show-details > "$results/scorecard.json" || status=$?
+          ENABLE_SARIF=1 "$scorecard" --repo="github.com/$GITHUB_REPOSITORY" --format=sarif --show-details --policy=.github/scorecard/policy.yml > "$results/scorecard.sarif" || status=$?
+          jq -e '.score and (.checks | length > 0)' "$results/scorecard.json" > /dev/null || { echo "::error::Scorecard wrote no readable results"; exit 1; }
+          jq -e '.runs | length > 0' "$results/scorecard.sarif" > /dev/null || { echo "::error::Scorecard wrote no readable SARIF file"; exit 1; }
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::Scorecard could not run these checks, which score -1: $(jq -r '[.checks[] | select(.score < 0) | .name] | join(", ")' "$results/scorecard.json")"
+          fi
+
+      - name: Summary
+        run: |
+          jq -r '
+            "### OpenSSF Scorecard: \(.score) of 10",
+            "",
+            "Scorecard \(.scorecard.version) on \(.repo.name) at commit \(.repo.commit[0:12]), \(.date). A score of -1 means that the check could not run or does not apply.",
+            "",
+            "| Check | Score | Reason |",
+            "|---|---|---|",
+            (.checks[] | "| \(.name) | \(.score) | \(.reason | gsub("\\|"; "\\\\|")) |")
+          ' "$RUNNER_TEMP/results/scorecard.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the results for the upload job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-results
+          path: |
+            ${{ runner.temp }}/results/scorecard.sarif
+            ${{ runner.temp }}/results/scorecard.json
+          if-no-files-found: error
+          retention-days: 7
+
+  upload:
+    name: Upload to code scanning
+    needs: analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the repository, which the upload uses to match the results to its files
+      security-events: write # upload the results to code scanning
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: scorecard-results
+          path: ${{ runner.temp }}/results
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: ${{ runner.temp }}/results/scorecard.sarif

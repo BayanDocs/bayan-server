@@ -1,0 +1,60 @@
+# Which OpenSSF Scorecard checks raise code-scanning alerts, and below which score (work package X-002). Scorecard reads this policy when it writes the SARIF file that .github/workflows/scorecard.yml uploads to code scanning: each check whose score is below its threshold becomes an alert under Security → Code scanning, with Scorecard's advice. The policy changes nothing about the scores themselves, which the workflow's job summary shows.
+# The thresholds and modes are those of the policy that OpenSSF's own Scorecard action ships (policies/template.yml of ossf/scorecard-action v2.4.4), so that an alert means the same here as in other projects, with one exception: Dependency-Update-Tool is disabled, because it looks for the update bots (Dependabot version updates, Renovate) that ADR-0017 rule 1 forbids; BayanDocs updates its dependencies in batched sessions instead, so the alert could never be fixed. Its score still counts in the aggregate score.
+# This file is identical in all five BayanDocs repositories: change it in all of them together.
+version: 1
+policies:
+  Binary-Artifacts:
+    score: 10
+    mode: enforced
+  Branch-Protection:
+    score: 10
+    mode: enforced
+  CI-Tests:
+    score: 10
+    mode: enforced
+  CII-Best-Practices:
+    # A passing OpenSSF Best Practices badge.
+    score: 5
+    mode: enforced
+  Code-Review:
+    score: 10
+    mode: enforced
+  Contributors:
+    score: 10
+    mode: disabled
+  Dangerous-Workflow:
+    score: 10
+    mode: enforced
+  Dependency-Update-Tool:
+    score: 10
+    mode: disabled
+  Fuzzing:
+    score: 10
+    mode: enforced
+  License:
+    score: 9
+    mode: enforced
+  Maintained:
+    score: 1
+    mode: enforced
+  Packaging:
+    score: 10
+    mode: enforced
+  Pinned-Dependencies:
+    score: 10
+    mode: enforced
+  SAST:
+    score: 10
+    mode: enforced
+  Security-Policy:
+    score: 10
+    mode: enforced
+  Signed-Releases:
+    score: 10
+    mode: disabled
+  Token-Permissions:
+    score: 10
+    mode: enforced
+  Vulnerabilities:
+    score: 10
+    mode: enforced
