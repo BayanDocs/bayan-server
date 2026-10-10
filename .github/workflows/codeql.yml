@@ -24,7 +24,6 @@ env:
   # The CodeQL bundle 2.27.2 (codeql-bundle-v2.27.2, published 2026-10-06). The SHA-256 is the one in the release's codeql-bundle-linux64.tar.zst.checksum.txt.
   CODEQL_VERSION: 2.27.2
   CODEQL_BUNDLE_SHA256: f24406b1557c506133db1f972758ee64f14eb3587a53367a1bd737f24495ea97
-  CARGO_TERM_COLOR: always
 
 jobs:
   analyze:
@@ -76,6 +75,8 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      CARGO_TERM_COLOR: always
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
