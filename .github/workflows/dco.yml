@@ -1,16 +1,20 @@
 # Checks the Developer Certificate of Origin (DCO) rules on every pull request (work package X-001; rules in CONTRIBUTING.md, decided in ADR-0003 §5): every commit by a person is signed off by its author, every commit by an AI agent names the agent and is not signed off by it, and a pull request with agent commits carries its human submitter's sign-off in the description.
 # It also runs when the description is edited, so adding the sign-off there is enough to re-run it. The check is .github/dco/check_dco.py (Python standard library only, no third-party action); its tests run first.
-# Workflow rules (ADR-0017): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository, no credentials kept after checkout, a timeout, and the pull_request trigger (never pull_request_target), so a pull request from a fork runs without write access or secrets.
+# In the merge queue (the merge_group event) it checks the queued pull request once more, with its commits and its description as GitHub has them when the queue is about to merge it, so a sign-off taken out of the description after the pull request's own run stops the merge. That event names no pull request, so the check reads the queued one from GitHub's API with the job's read-only token (check_dco.py explains how), and whatever it cannot establish fails the run instead of passing it.
+# Workflow rules (ADR-0017): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository and its pull requests, no credentials kept after checkout, a timeout, and the pull_request trigger (never pull_request_target), so a pull request from a fork runs without write access or secrets.
 name: DCO
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  merge_group:
+    types: [checks_requested]
 
 permissions: {}
 
 concurrency:
-  group: dco-${{ github.event.pull_request.number }}
+  # One group per pull request, so that a newer push or edit replaces the older run, and one per queue branch in the merge queue.
+  group: dco-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -20,6 +24,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read # check out the repository
+      pull-requests: read # in the merge queue, read the queued pull request's head and description (check_dco.py --merge-group)
     steps:
       - name: Check out the pull request with its full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,6 +35,13 @@ jobs:
       - name: Test the DCO check
         run: python3 -m unittest discover --start-directory .github/dco
 
-      # The event file holds the pull request's base, head and description; the description is read from it, never pasted into this script.
+      # The event file holds the pull request's base, head and description, or in the merge queue the queue's branch; the description is read from that file or from GitHub's API, never pasted into this script. Only the merge queue's run gets the token, and an event that this step does not know stops the check instead of passing it.
       - name: Check the commits and the pull request description
-        run: python3 .github/dco/check_dco.py --event "$GITHUB_EVENT_PATH"
+        env:
+          GITHUB_TOKEN: ${{ github.event_name == 'merge_group' && github.token || '' }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) python3 .github/dco/check_dco.py --event "$GITHUB_EVENT_PATH" ;;
+            merge_group) python3 .github/dco/check_dco.py --merge-group "$GITHUB_EVENT_PATH" ;;
+            *) echo "::error title=DCO::The DCO check does not know the event $GITHUB_EVENT_NAME, so it checked nothing."; exit 2 ;;
+          esac

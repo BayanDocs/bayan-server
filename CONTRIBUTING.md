@@ -53,7 +53,7 @@ The DCO is a certification that only a person can make ([ADR-0003 §5](https://g
 
 ### What the DCO check checks
 
-The DCO workflow (`.github/workflows/dco.yml`) checks every commit that a pull request adds. Commits that are already on `main` are not checked. It runs again whenever the pull request's description is edited, so adding a sign-off there is all it takes.
+The DCO workflow (`.github/workflows/dco.yml`) checks every commit that a pull request adds. Commits that are already on `main` are not checked. It runs again whenever the pull request's description is edited, so adding a sign-off there is all it takes. When a pull request goes through the merge queue, the check runs once more, on the pull request's commits and description as they are when the queue is about to merge it, so a sign-off taken out of the description after the pull request's own check stops the merge; if the check cannot read the queued pull request from GitHub, it fails instead of passing.
 
 | Commit | What it needs |
 |---|---|
