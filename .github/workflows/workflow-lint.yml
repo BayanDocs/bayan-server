@@ -1,13 +1,15 @@
-# Lints the GitHub Actions workflows of this repository (work package X-002; ADR-0017, threat T16 in docs/specs/threat-model.md), on every pull request, on pushes to main and nightly, so that a newly published advisory against a pinned action is noticed even when no workflow changes:
+# Lints the GitHub Actions workflows of this repository (work package X-002; ADR-0017, threat T16 in docs/specs/threat-model.md), on every pull request, in the merge queue, on pushes to main and nightly, so that a newly published advisory against a pinned action is noticed even when no workflow changes:
 #   - zizmor, a static analyser for workflows, must report no findings at its default settings. It reads no configuration file (--no-config), obeys no ignore comment (--no-ignores), and audits every workflow even when a .gitignore file names it (--collect=all; by default zizmor skips such files, so a committed .gitignore could hide a workflow from it), so that nothing in the repository except this file can silence it. It runs with the job's read-only token, which switches on its online audits: actions with known vulnerabilities (Dependabot does not alert on actions pinned to a commit), commits that come from a fork rather than the action's own repository, and version comments that do not match their commit.
 #   - pinact checks that every action is pinned to a full commit SHA and that each pinned commit is at least a day old (ADR-0017 rule 4). It runs with an empty configuration of its own, so that a configuration file in the repository cannot exempt an action.
 # Both tools are pinned like the BayanDocs cloud environment's (docs/scripts/cloud-environment-setup.sh), and docs/scripts/tests/test_repository_baseline.py keeps the pins equal: zizmor from .github/workflow-lint/requirements.txt with its SHA-256 hash, pinact as the release archive whose SHA-256 is below.
-# Workflow conventions (AGENTS.md): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository, no credentials kept after checkout, a timeout, and the pull_request trigger (never pull_request_target).
+# Workflow conventions (AGENTS.md): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository, no credentials kept after checkout, a timeout, and the pull_request and merge_group triggers (never pull_request_target).
 # This file and .github/workflow-lint/ are identical in all five BayanDocs repositories: change them in all of them together.
 name: Workflow lint
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:

@@ -1,12 +1,14 @@
-# Scans this repository with CodeQL, GitHub's static analysis, on every pull request, on pushes to main and weekly, and uploads the results to GitHub code scanning (work package X-002). Alerts appear under Security → Code scanning, and a pull request shows the ones it would add.
+# Scans this repository with CodeQL, GitHub's static analysis, on every pull request, in the merge queue, on pushes to main and weekly, and uploads the results to GitHub code scanning (work package X-002). Alerts appear under Security → Code scanning, and a pull request shows the ones it would add.
 # Languages: GitHub Actions (the workflows), Python (the checks in .github/) and Rust (the server's workspace). The MLS spike (spikes/mls), a time-boxed experiment with a workspace and Cargo.lock of its own that the lockfile-age check does not cover yet, is not scanned.
 # None of these languages needs a build, but CodeQL's Rust extractor runs `cargo check` on the workspace to learn what build scripts and procedural macros produce, which runs code of the dependencies. The Rust job therefore first runs the same supply-chain checks as ci.yml's first job, so that no dependency they would reject runs here either. With CodeQL 2.27.2 that `cargo check` stops at once: the extractor installs and uses its own Rust version (1.98.1, with rustup), older than the workspace's rust-version (1.99), so CodeQL reads macros without expanding them.
 # CodeQL's engine, the CodeQL bundle, is downloaded by this workflow and checked against the SHA-256 that its release publishes, then handed to the CodeQL action, which would otherwise download it without checking a hash. Keep CODEQL_VERSION equal to the bundle that the pinned github/codeql-action names in its src/defaults.json (version 4.38.3 names 2.27.2), and update both together in the monthly dependency session, in all five BayanDocs repositories.
-# Workflow conventions (AGENTS.md): GitHub's own actions only, pinned to full commit SHAs with the version in a comment; per-job permissions; no credentials kept after checkout; timeouts; the pull_request trigger (never pull_request_target).
+# Workflow conventions (AGENTS.md): GitHub's own actions only, pinned to full commit SHAs with the version in a comment; per-job permissions; no credentials kept after checkout; timeouts; the pull_request and merge_group triggers (never pull_request_target).
 name: CodeQL
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:
