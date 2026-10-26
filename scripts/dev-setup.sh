@@ -9,7 +9,7 @@
 #   cargo-deny 0.20.2               released 2026-07-09  dependency policy checks in `cargo xtask verify`
 #   grype 0.120.0                   released 2026-10-02  container image vulnerability scanner (CI)
 #   wasm-bindgen 0.2.129            released 2026-09-25  wasm-bindgen and wasm-bindgen-test-runner, for the MLS spike's WebAssembly tests and size measurement
-#   node 24.21.0                    released 2026-09-07  Node.js (only its `node` program), runs the WebAssembly tests in Node.js; hash from nodejs.org's signed SHASUMS256.txt, as in bayan-web
+#   node 24.22.1                    released 2026-10-20  Node.js (only its `node` program), runs the WebAssembly tests in Node.js; hash from nodejs.org's signed SHASUMS256.txt, as in bayan-web
 #   chromedriver 153.0.8010.12      released 2026-08-25  drives the browser for the WebAssembly tests in Chromium
 #   chrome-headless-shell 153.0.8010.12  released 2026-08-25  Chromium's headless shell (Chrome for Testing), the same build bayan-web tests with
 # The two Chrome for Testing archives were hashed from Google's storage.googleapis.com and confirmed identical on npmmirror (cdn.npmmirror.com/binaries/chrome-for-testing/…), a mirror run by a different organization, on 2026-10-07.
@@ -25,7 +25,7 @@ tools=(
   "cargo-deny|0.20.2|https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz|9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f|bin:cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny|cargo-deny --version"
   "grype|0.120.0|https://github.com/anchore/grype/releases/download/v0.120.0/grype_0.120.0_linux_amd64.tar.gz|a5a1218dce63acdac152a6b3b5bb366e7267e36f4069848cf455543b3fa5700e|bin:grype|grype --version"
   "wasm-bindgen|0.2.129|https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.129/wasm-bindgen-0.2.129-x86_64-unknown-linux-musl.tar.gz|82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e|files:wasm-bindgen-0.2.129-x86_64-unknown-linux-musl/wasm-bindgen,wasm-bindgen-0.2.129-x86_64-unknown-linux-musl/wasm-bindgen-test-runner|wasm-bindgen --version"
-  "node|24.21.0|https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz|fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6|files:node-v24.21.0-linux-x64/bin/node|node --version"
+  "node|24.22.1|https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz|6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6|files:node-v24.22.1-linux-x64/bin/node|node --version"
   "chromedriver|153.0.8010.12|https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chromedriver-linux64.zip|b7d5f7c120f7827f3538b416e08b82418eb702f18b680c183f0411c8d7f2df69|files:chromedriver-linux64/chromedriver|chromedriver --version"
   "chrome-headless-shell|153.0.8010.12|https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chrome-headless-shell-linux64.zip|a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d|tree:chrome-headless-shell-linux64|chrome-headless-shell --version"
 )
