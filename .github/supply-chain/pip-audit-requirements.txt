@@ -1,13 +1,13 @@
 # pip-audit and its dependencies, for the pip-audit job of the supply-chain workflow (.github/workflows/supply-chain.yml), which audits every hash-pinned requirements file of the repository (ADR-0017, Python tools in CI; work package X-003). Exact versions with SHA-256 hashes, installed with pip --require-hashes as wheels only; typing-extensions is installed only on Python 3.12 and older, as its marker says. docs/scripts/dev-setup.sh --pip-audit installs the same pins on a Linux x86-64 machine.
-# Generated with docs/scripts/python-tool-hashes.py 'pip-audit==2.10.1' 2026-10-03T00:00:00Z: wheels for CPython 3.11-3.14 on x86-64 Ubuntu 24.04.
-# Publish dates: pip-audit 2.10.1 on 2026-06-10; the newest pin, filelock 4.0.9, on 2026-10-01. pip-audit is a standalone CI tool that is never shipped, so its dependencies' open-source licenses (MIT, BSD, Apache-2.0, MPL-2.0 for certifi, PSF-2.0 for defusedxml and typing-extensions) are acceptable (ADR-0017, amendment "what the license allowlist covers").
-# Changed only in the monthly dependency session, in all five BayanDocs repositories. The supply-chain workflow audits this file too.
+# Generated with docs/scripts/python-tool-hashes.py 'pip-audit==2.10.1' 2026-10-25T13:00:00Z: wheels for CPython 3.11-3.14 on x86-64 Ubuntu 24.04.
+# Publish dates: pip-audit 2.10.1 on 2026-06-10; the newest pin, certifi 2026.10.23, on 2026-10-23. pip-audit is a standalone CI tool that is never shipped, so its dependencies' open-source licenses (MIT, BSD, Apache-2.0, MPL-2.0 for certifi, PSF-2.0 for defusedxml and typing-extensions) are acceptable (ADR-0017, amendment "what the license allowlist covers").
+# Changed only in the monthly dependency session or for a security alert, in all five BayanDocs repositories; last changed on 2026-10-26 for certifi's PYSEC-2026-4320 and filelock's CVE-2026-112940, CVE-2026-112913 and CVE-2026-112907. The supply-chain workflow audits this file too.
 boolean-py==5.0 \
     --hash=sha256:ef28a70bd43115208441b53a045d1549e2f0ec6e3d08a9d142cbc41c1938e8d9
 cachecontrol==0.14.4 \
     --hash=sha256:b7ac014ff72ee199b5f8af1de29d60239954f223e948196fa3d84adaffc71d2b
-certifi==2026.7.22 \
-    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
+certifi==2026.10.23 \
+    --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
 charset-normalizer==3.5.2 \
     --hash=sha256:1c50fe28bbc2ced33386f298650d91218076c05420e6cbd790b913adc41659e7 \
     --hash=sha256:211d5a3eb6af8f513b8d4ca19a8c1b7accab1b5f0d3175f9826b03c1a920dc1f \
@@ -20,8 +20,8 @@ cyclonedx-python-lib==11.12.0 \
     --hash=sha256:0e807521a921a5c3cb8ce1153f8a61d29eedfe76a46aac2796b7c6b573391a54
 defusedxml==0.7.1 \
     --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
-filelock==4.0.9 \
-    --hash=sha256:9287fd61b99a806e5202be29a83034c0808a1b9830e820537c2f5773981f7eeb
+filelock==4.2.4 \
+    --hash=sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e
 idna==3.20 \
     --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
 license-expression==30.4.4 \
@@ -40,16 +40,16 @@ packageurl-python==0.17.6 \
     --hash=sha256:31a85c2717bc41dd818f3c62908685ff9eebcb68588213745b14a6ee9e7df7c9
 packaging==26.3 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
-pip==26.2.1 \
-    --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e
+pip==26.2.2 \
+    --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70
 pip-api==0.0.35 \
     --hash=sha256:66990d0da25378555cbb538db79384bab92d4617c6350dfd7a2126ba2a3a9894
 pip-audit==2.10.1 \
     --hash=sha256:99ef3f600a317c1945f1e89e227ef26e1c2d618429b8bd3fa6f4f7c440c4611a
 pip-requirements-parser==32.0.1 \
     --hash=sha256:4659bc2a667783e7a15d190f6fccf8b2486685b6dba4c19c3876314769c57526
-platformdirs==4.12.2 \
-    --hash=sha256:29dbf06d96c500bc6bdbce75fb0a14d63279c93b1842f97e72a135b33e856983
+platformdirs==4.13.5 \
+    --hash=sha256:53d3ec4280b815c1e0b02edad7f9ee8fda1ba9c0865dd9c2e6e63849ce82fc1e
 py-serializable==2.1.0 \
     --hash=sha256:b56d5d686b5a03ba4f4db5e769dc32336e142fc3bd4d68a8c25579ebb0a67304
 pygments==2.21.0 \
@@ -62,13 +62,13 @@ rich==15.0.0 \
     --hash=sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb
 sortedcontainers==2.4.0 \
     --hash=sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0
-tomli==2.4.1 \
-    --hash=sha256:01f520d4f53ef97964a240a035ec2a869fe1a37dde002b57ebc4417a27ccd853 \
-    --hash=sha256:0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe \
-    --hash=sha256:136443dbd7e1dee43c68ac2694fde36b2849865fa258d39bf822c10e8068eac5 \
-    --hash=sha256:5a881ab208c0baf688221f8cecc5401bd291d67e38a1ac884d6736cbcd8247e9 \
-    --hash=sha256:734e20b57ba95624ecf1841e72b53f6e186355e216e5412de414e3c51e5e3c41 \
-    --hash=sha256:f3c6818a1a86dd6dca7ddcaaf76947d5ba31aecc28cb1b67009a5877c9a64f3f
+tomli==2.5.0 \
+    --hash=sha256:22185fad8a1e622f064e78008018a0dd3323550dcb479cb7a1d296888d74024f \
+    --hash=sha256:32a7b79ac57a2e83670ce329ccf675798bc5a2094783a63676866b70503f2e2b \
+    --hash=sha256:5d8bac3d603c97e6854424e5b2b5b741bdbde387e09f162fb0446812b4a8362b \
+    --hash=sha256:6cf74416bdc94ae458b14e37286c1073081850ac8459a00d0c5efef5d44294c6 \
+    --hash=sha256:7ac2027d37c3afbdf4bdd377f2676f6f1d2122a5be1f1137b49dced590b37e75 \
+    --hash=sha256:d7e369fd63331746182360977b1892bfc215476a30d61612d732425311639f56
 tomli-w==1.2.0 \
     --hash=sha256:188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90
 typing-extensions==4.16.0 ; python_full_version < '3.13' \
