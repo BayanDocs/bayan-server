@@ -10,7 +10,10 @@ yanked = "deny"
 # Advisories that a crate is unmaintained or unsound count for every crate in the build, direct or not. For unmaintained crates that is cargo-deny's default; for unsound ones the default would count only the workspace's direct dependencies.
 unmaintained = "all"
 unsound = "all"
-ignore = []
+# Exception accepted by the owner on 2026-10-27 (option 1 of the open question in BayanDocs/bayan-server#8), for an advisory whose fix cannot be reached yet: crypto-bigint 0.5.5 has a timing leak that is fixed only in crypto-bigint 0.7.9 and later, which only elliptic-curve 0.14 can use, and the newest releases of the MLS spike's RustCrypto providers (openmls_rust_crypto 0.6.0, mls-rs-crypto-rustcrypto 0.22.1) still need elliptic-curve 0.13. This file is shared by the server and the spike, so the exception also covers the server, which does not depend on crypto-bigint at all today (`cargo tree -i crypto-bigint` finds nothing); a change that brings crypto-bigint into the server must remove the exception first. Review date: every monthly dependency session, starting with November 2026's (the docs repository's developer/dependency-update-runbook.md): the reason must still hold, and the entry goes as soon as those providers move to elliptic-curve 0.14 or the spike is retired.
+ignore = [
+  { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 reaches only the MLS spike (spikes/mls), through the RustCrypto providers of OpenMLS and mls-rs, which still need elliptic-curve 0.13; the spike is never built into the server and runs only tests and benchmarks with throwaway keys; the fix needs those providers on elliptic-curve 0.14; re-check in every monthly session, and remove once they move or the spike is retired" },
+]
 
 [licenses]
 version = 2
