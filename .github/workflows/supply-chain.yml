@@ -1,13 +1,15 @@
-# The supply-chain checks of ADR-0017 that are the same in every BayanDocs repository (work package X-003), on every pull request, on pushes to main and nightly:
+# The supply-chain checks of ADR-0017 that are the same in every BayanDocs repository (work package X-003), on every pull request, in the merge queue, on pushes to main and nightly:
 #   - "No update bots": fails when configuration for Dependabot version updates, Renovate or a similar service appears (rule 1). The check is .github/supply-chain/check_update_bots.py (Python standard library only); its tests run first.
 #   - "pip-audit": the Python tools that CI installs from hash-pinned requirements files (every *requirements*.txt that Git tracks) have no known vulnerabilities (the "Python tools in CI" row and rule 7). pip-audit itself is installed from .github/supply-chain/pip-audit-requirements.txt (exact versions, SHA-256 hashes, wheels only), and a canary proves that it still finds a known vulnerability before its "nothing found" is believed.
 # The nightly run notices new advisories against pins that did not change. The checks that differ between repositories (exact pins and the age of new Cargo.lock entries, the pnpm settings and lockfile integrity, the Qt release date) are part of each repository's own verification gate.
-# Workflow rules (ADR-0017): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository, no credentials kept after checkout, timeouts, and the pull_request trigger only (never pull_request_target).
+# Workflow rules (ADR-0017): actions pinned to full commit SHAs with the version in a comment, no permissions beyond reading the repository, no credentials kept after checkout, timeouts, and for pull requests only the pull_request and merge_group triggers (never pull_request_target).
 # This file and .github/supply-chain/ are identical in all five BayanDocs repositories: change them in all of them together.
 name: Supply chain
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:

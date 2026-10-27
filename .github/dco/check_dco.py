@@ -8,12 +8,15 @@
 #   5. A sign-off names a real person's email address. An address at a domain reserved for examples (example.com, example.net, example.org, or one ending in .example) never counts, so a placeholder such as "you@example.com", copied from the instructions without filling it in, cannot pass for a sign-off. A commit whose author has such an address cannot be signed off at all.
 #   Co-authors named in "Co-authored-by:" lines are credited, not checked: the author's sign-off covers the whole commit.
 #
+# In the merge queue the same rules are checked once more. A merge_group event names no pull request and carries no description, so the check reads the queued pull request's number from the name of the queue's branch (gh-readonly-queue/<base branch>/pr-<number>-<commit>), then the pull request's head and description from GitHub's API with the job's read-only token, fetches that head, and checks its commits and description exactly as on the pull request. Anything it cannot establish (a branch name it does not recognize, a pull request that is closed, aims at another branch or changed since it was queued, an API error) stops the check with exit status 2, so the queue never merges a pull request that was not checked. The queue must require every queued pull request to pass its own checks ("Require all queue entries to pass required checks"), because each queue branch names only its own pull request.
+#
 # Usage:
 #   check_dco.py --event FILE                              in GitHub Actions; FILE is the pull_request event ($GITHUB_EVENT_PATH)
+#   check_dco.py --merge-group FILE                        in GitHub Actions' merge queue; FILE is the merge_group event, and GITHUB_TOKEN and GITHUB_REPOSITORY must be set
 #   check_dco.py --base REV --head REV [--description FILE]  on your own machine, for example: --base origin/main --head HEAD
 # Exit status: 0 when every rule is met, 1 when a rule is broken, 2 when the check could not run.
 #
-# Needs Python 3.9 or later and Git 2.38 or later, nothing else. The tests are in test_check_dco.py next to this file. This folder is identical in all five BayanDocs repositories: change it in all of them together.
+# Needs Python 3.9 or later and Git 2.38 or later, nothing else; in the merge queue, also access to GitHub's API and to the repository's pull request refs. The token is sent only to https://api.github.com and never printed. The tests are in test_check_dco.py next to this file. This folder is identical in all five BayanDocs repositories: change it in all of them together.
 
 from __future__ import annotations
 
@@ -25,9 +28,11 @@ import re
 import subprocess
 import sys
 import unicodedata
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 AGENTS_FILE = Path(__file__).resolve().with_name("agents.txt")
 
@@ -46,6 +51,11 @@ OBJECT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")  # SHA-1 or SHA-256
 GIT_MINIMUM = (2, 38)  # `git merge-tree --write-tree`
 # Domains reserved for examples in documentation (RFC 2606 and RFC 6761), together with all their subdomains. No person has an email address there.
 EXAMPLE_DOMAINS = ("example.com", "example.net", "example.org", "example")
+# The branch that GitHub's merge queue creates for a queued pull request: gh-readonly-queue/<base branch>/pr-<number>-<commit>. GitHub documents only its prefix, so a name of any other shape stops the check instead of passing it.
+QUEUE_BRANCH = re.compile(r"refs/heads/gh-readonly-queue/(?P<base>.+)/pr-(?P<number>[1-9][0-9]{0,9})-[0-9a-f]{40}(?:[0-9a-f]{24})?")
+REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+GITHUB_API = "https://api.github.com"
+GITHUB_API_VERSION = "2026-03-10"  # the REST API version that BayanDocs' scripts follow (docs/scripts/github-settings.py)
 
 
 class CheckError(Exception):
@@ -387,23 +397,93 @@ def from_event(repo: Path, event_file: Path) -> Tuple[str, List[str], str]:
     return resolve(repo, head_sha), excluded, description
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Turns every redirect into an error, so the token is never sent anywhere but api.github.com."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+def github_pull_request(number: int) -> Dict[str, Any]:
+    """The pull request as GitHub's REST API returns it (GET /repos/{owner}/{repo}/pulls/{number}), read with the job's token from GITHUB_TOKEN for the repository in GITHUB_REPOSITORY."""
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not REPOSITORY.fullmatch(repository):
+        raise CheckError("GITHUB_REPOSITORY does not name a repository as owner/name")
+    if not token:
+        raise CheckError("GITHUB_TOKEN is not set: the merge queue's step gives the check the job's token, to read the queued pull request")
+    request = urllib.request.Request(f"{GITHUB_API}/repos/{repository}/pulls/{number}")
+    for name, value in (("Accept", "application/vnd.github+json"), ("Authorization", f"Bearer {token}"), ("User-Agent", "BayanDocs-DCO-check"), ("X-GitHub-Api-Version", GITHUB_API_VERSION)):
+        request.add_unredirected_header(name, value)
+    try:
+        with urllib.request.build_opener(_NoRedirects).open(request, timeout=60) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        raise CheckError(f"GitHub refused to show pull request #{number} (HTTP {error.code})") from None
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        raise CheckError(f"cannot read pull request #{number} from GitHub ({type(error).__name__})") from None
+    if not isinstance(data, dict):
+        raise CheckError(f"GitHub's answer for pull request #{number} is not a pull request")
+    return data
+
+
+def from_merge_group(repo: Path, event_file: Path, read_pull_request: Callable[[int], Dict[str, Any]] = github_pull_request) -> Tuple[str, List[str], str, int]:
+    """Reads the queued pull request of a merge_group event: its number from the queue's branch, then its head and description from GitHub. Returns the head, the commits to exclude, the description and the pull request's number."""
+    try:
+        group = json.loads(event_file.read_text(encoding="utf-8"))["merge_group"]
+        head_ref, base_ref, base_sha = group["head_ref"], group["base_ref"], group["base_sha"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise CheckError(f"{event_file} is not a merge_group event ({type(error).__name__}: {error})") from None
+    if not all(isinstance(value, str) for value in (head_ref, base_ref, base_sha)) or not OBJECT_ID.fullmatch(base_sha):
+        raise CheckError(f"{event_file} is not a merge_group event")
+    match = QUEUE_BRANCH.fullmatch(head_ref)
+    if match is None or base_ref != f"refs/heads/{match.group('base')}":
+        raise CheckError(f"the merge queue's branch {head_ref!r} does not name a pull request into {base_ref!r}")
+    number = int(match.group("number"))
+    pull_request = read_pull_request(number)
+    try:
+        found, state = pull_request["number"], pull_request["state"]
+        base_branch, head_sha = pull_request["base"]["ref"], pull_request["head"]["sha"]
+        description = pull_request.get("body") or ""
+    except (KeyError, TypeError, AttributeError) as error:
+        raise CheckError(f"GitHub's answer for pull request #{number} lacks a field ({type(error).__name__}: {error})") from None
+    if found != number or state != "open" or not isinstance(base_branch, str) or base_ref != f"refs/heads/{base_branch}":
+        raise CheckError(f"pull request #{number} is not an open pull request into {base_ref} (GitHub says: state {state!r}, base branch {base_branch!r})")
+    if not isinstance(head_sha, str) or not OBJECT_ID.fullmatch(head_sha) or not isinstance(description, str):
+        raise CheckError(f"GitHub's answer for pull request #{number} has no valid head commit or description")
+    # The checkout holds only the queue's branch, whose commits GitHub made; the pull request's own commits come from its head ref. GitHub takes a pull request out of the queue when it changes, so a head that differs from the one GitHub names means that this queue run is out of date.
+    git(repo, "fetch", "--quiet", "--no-tags", "origin", f"+refs/pull/{number}/head:refs/remotes/origin/pull/{number}/head")
+    if resolve(repo, f"refs/remotes/origin/pull/{number}/head") != head_sha:
+        raise CheckError(f"pull request #{number} changed after it was queued; GitHub takes it out of the queue")
+    excluded = [resolve(repo, base_sha)]
+    result = git(repo, "rev-parse", "--verify", "--quiet", "--end-of-options", f"refs/remotes/origin/{base_branch}^{{commit}}", ok=(0, 1))
+    if result.returncode == 0:
+        excluded.append(result.stdout.decode("ascii", "replace").strip())
+    return head_sha, excluded, description, number
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Checks the DCO sign-offs of a pull request (CONTRIBUTING.md, \"Developer Certificate of Origin\").")
     parser.add_argument("--event", type=Path, help="the GitHub pull_request event file ($GITHUB_EVENT_PATH)")
+    parser.add_argument("--merge-group", type=Path, help="the GitHub merge_group event file ($GITHUB_EVENT_PATH), in the merge queue; the queued pull request is read from GitHub with GITHUB_TOKEN")
     parser.add_argument("--base", help="local run: the branch the pull request goes into, for example origin/main")
     parser.add_argument("--head", help="local run: the last commit of the pull request, for example HEAD")
     parser.add_argument("--description", type=Path, help="local run: a file with the pull request description, to check it too")
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="the Git repository (default: the current folder)")
     parser.add_argument("--agents", type=Path, default=AGENTS_FILE, help="the list of AI agent identities (default: agents.txt next to this script)")
     args = parser.parse_args(argv)
-    if (args.event is None) == (args.base is None) or (args.base is None) != (args.head is None) or (args.event and args.description):
-        parser.error("use either --event FILE, or --base REV --head REV [--description FILE]")
+    modes = sum(value is not None for value in (args.event, args.merge_group, args.base))
+    if modes != 1 or (args.base is None) != (args.head is None) or (args.base is None and args.description):
+        parser.error("use either --event FILE, --merge-group FILE, or --base REV --head REV [--description FILE]")
     in_actions = os.environ.get("GITHUB_ACTIONS") == "true"
     try:
         agents = load_agents(args.agents)
         require_git(args.repo)
         if args.event is not None:
             head, excluded, description = from_event(args.repo, args.event)
+        elif args.merge_group is not None:
+            head, excluded, description, number = from_merge_group(args.repo, args.merge_group, github_pull_request)
+            print(f"The merge queue checks pull request #{number} again, with its commits and its description as GitHub has them now.")
         else:
             head, excluded = resolve(args.repo, args.head), [resolve(args.repo, args.base)]
             description = None

@@ -13,8 +13,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -405,9 +406,10 @@ class CommandLineTests(DcoTestCase):
         self.assertIn("is not a commit ID", output)
 
     def test_wrong_arguments_are_refused(self) -> None:
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
-            check_dco.main(["--base", "main"])
-        self.assertEqual(stop.exception.code, 2)
+        for arguments in (["--base", "main"], ["--event", "a.json", "--merge-group", "b.json"], ["--merge-group", "b.json", "--description", "d.md"], ["--event", "a.json", "--head", "HEAD"]):
+            with self.subTest(arguments), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
+                check_dco.main(arguments)
+            self.assertEqual(stop.exception.code, 2)
 
     def test_in_github_actions_problems_become_annotations_and_a_summary(self) -> None:
         # Git itself removes "<", ">" and line feeds from names, but keeps a carriage return and the escape character: this name tries to break out of the annotation, the summary table and the log line, where GitHub's runner would read the text after the carriage return as a workflow command of its own.
@@ -443,6 +445,141 @@ class CommandLineTests(DcoTestCase):
         self.assertEqual(status, 1, output)
         self.assertNotIn("\x07", output)
         self.assertIn('signed off by the AI agent "Cla\\x07ude <noreply@anthropic.com>"', output)
+
+
+class MergeQueueTests(DcoTestCase):
+    """--merge-group: the merge queue's run checks the queued pull request again, read from GitHub (a stand-in here) and from its head ref (in a local "origin")."""
+
+    NUMBER = 7
+
+    def setUp(self) -> None:
+        super().setUp()
+        origin = self.repo.path / "origin.git"
+        subprocess.run(["git", "init", "--quiet", "--bare", str(origin)], env=self.repo.env, check=True, capture_output=True)
+        self.repo.git("remote", "add", "origin", str(origin))
+        self.repo.git("push", "--quiet", "origin", "main")
+        self.repo.git("fetch", "--quiet", "origin")
+
+    def queue(self, body: Optional[str], head_ref: Optional[str] = None) -> "tuple[Path, Dict[str, Any]]":
+        """Publishes the current branch as the head of pull request NUMBER, and writes the merge_group event of its queue branch. Returns the event file and GitHub's answer for the pull request."""
+        self.repo.git("push", "--quiet", "--force", "origin", f"HEAD:refs/pull/{self.NUMBER}/head")
+        group = {
+            "head_sha": "1" * 40,  # the queue's own commit, which the check does not read
+            "head_ref": head_ref or f"refs/heads/gh-readonly-queue/main/pr-{self.NUMBER}-{self.base}",
+            "base_sha": self.base,
+            "base_ref": "refs/heads/main",
+        }
+        path = self.repo.path / "merge_group.json"
+        path.write_text(json.dumps({"action": "checks_requested", "merge_group": group}))
+        pull_request = {"number": self.NUMBER, "state": "open", "base": {"ref": "main"}, "head": {"sha": self.repo.head()}, "body": body}
+        return path, pull_request
+
+    def check_queued(self, path: Path, pull_request: Dict[str, Any]) -> check_dco.Report:
+        head, excluded, description, number = check_dco.from_merge_group(self.repo.work, path, lambda asked: pull_request if asked == self.NUMBER else {})
+        self.assertEqual(number, self.NUMBER)
+        return check_dco.check(self.repo.work, head, excluded, description, AGENTS)
+
+    def test_the_queued_pull_request_is_checked_like_on_the_pull_request(self) -> None:
+        self.repo.commit("feat: add a parser", AGENT, trailers=[co_author(AGENT, "Co-Authored-By")])
+        report = self.check_queued(*self.queue(sign_off(PERSON)))
+        self.assert_passes(report)
+        self.assertEqual([verdict.kind for verdict in report.verdicts], ["agent"])
+        # A sign-off removed from the description after the pull request was queued stops the merge.
+        self.assertFalse(self.check_queued(*self.queue("")).ok)
+
+    def test_commits_of_the_base_branch_are_not_checked(self) -> None:
+        # The queue's base has an old commit without a sign-off, which the pull request merged in; only the pull request's own commits count.
+        self.repo.switch("main")
+        self.repo.commit("An old commit without a sign-off", SECOND_PERSON)
+        self.base = self.repo.head()
+        self.repo.switch("feature")
+        self.repo.merge("main", PERSON)
+        self.repo.commit("Fix a typo", PERSON, trailers=[sign_off(PERSON)])
+        report = self.check_queued(*self.queue(""))
+        self.assert_passes(report)
+        self.assertEqual([verdict.kind for verdict in report.verdicts], ["merge", "person"])
+
+    def test_a_queue_branch_that_names_no_pull_request_stops_the_check(self) -> None:
+        self.repo.commit("Fix a typo", PERSON, trailers=[sign_off(PERSON)])
+        for head_ref in (
+            "refs/heads/main",
+            f"refs/heads/gh-readonly-queue/main/pr-{self.NUMBER}",
+            f"refs/heads/gh-readonly-queue/main/pr-x-{self.base}",
+            f"refs/heads/gh-readonly-queue/main/pr-0{self.NUMBER}-{self.base}",
+            f"refs/heads/gh-readonly-queue/develop/pr-{self.NUMBER}-{self.base}",  # a queue for another branch than the event's base
+        ):
+            with self.subTest(head_ref), self.assertRaises(check_dco.CheckError):
+                self.check_queued(*self.queue(sign_off(PERSON), head_ref=head_ref))
+
+    def test_a_pull_request_that_is_not_the_queued_one_stops_the_check(self) -> None:
+        self.repo.commit("Fix a typo", PERSON, trailers=[sign_off(PERSON)])
+        for answer in ({"state": "closed"}, {"base": {"ref": "develop"}}, {"number": self.NUMBER + 1}, {"head": {"sha": "2" * 40}}, {"head": None}, {"body": 7}):
+            path, pull_request = self.queue(sign_off(PERSON))
+            pull_request.update(answer)
+            with self.subTest(answer), self.assertRaises(check_dco.CheckError):
+                self.check_queued(path, pull_request)
+
+    def test_a_pull_request_that_changed_after_it_was_queued_stops_the_check(self) -> None:
+        self.repo.commit("Fix a typo", PERSON, trailers=[sign_off(PERSON)])
+        path, pull_request = self.queue(sign_off(PERSON))
+        self.repo.commit("Another change", PERSON, trailers=[sign_off(PERSON)])
+        self.repo.git("push", "--quiet", "--force", "origin", f"HEAD:refs/pull/{self.NUMBER}/head")  # its head ref moved on; GitHub's answer still names the queued head
+        with self.assertRaises(check_dco.CheckError) as stop:
+            self.check_queued(path, pull_request)
+        self.assertIn("changed after it was queued", str(stop.exception))
+
+    def test_the_command_line_checks_the_queued_pull_request(self) -> None:
+        self.repo.commit("feat: add a parser", AGENT, trailers=[co_author(AGENT, "Co-Authored-By")])
+        for body, expected in ((sign_off(PERSON), 0), ("", 1)):
+            path, pull_request = self.queue(body)
+            output = io.StringIO()
+            with mock.patch.object(check_dco, "github_pull_request", return_value=pull_request), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                status = check_dco.main(["--merge-group", str(path), "--repo", str(self.repo.work)])
+            self.assertEqual(status, expected, output.getvalue())
+            self.assertIn(f"pull request #{self.NUMBER} again", output.getvalue())
+        # When GitHub cannot be asked, the check could not run, and the queue does not merge.
+        path, _ = self.queue(sign_off(PERSON))
+        with mock.patch.object(check_dco, "github_pull_request", side_effect=check_dco.CheckError("GitHub refused to show pull request #7 (HTTP 403)")), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(check_dco.main(["--merge-group", str(path), "--repo", str(self.repo.work)]), 2)
+
+
+class GitHubApiTests(unittest.TestCase):
+    """github_pull_request: one GET to api.github.com with the job's token, which never appears in a message."""
+
+    TOKEN = "ghs_secretsecretsecret"
+    ENVIRONMENT = {"GITHUB_REPOSITORY": "BayanDocs/docs", "GITHUB_TOKEN": TOKEN}
+
+    def opener(self, answer: Any = None, error: Optional[Exception] = None) -> mock.Mock:
+        opener = mock.Mock()
+        if error is not None:
+            opener.open.side_effect = error
+        else:
+            opener.open.return_value = io.BytesIO(json.dumps(answer).encode("utf-8"))
+        return opener
+
+    def test_it_asks_github_s_api_for_the_pull_request(self) -> None:
+        opener = self.opener({"number": 7})
+        with mock.patch.dict(os.environ, self.ENVIRONMENT), mock.patch.object(check_dco.urllib.request, "build_opener", return_value=opener) as build:
+            self.assertEqual(check_dco.github_pull_request(7), {"number": 7})
+        build.assert_called_once_with(check_dco._NoRedirects)  # a redirect would carry the token elsewhere
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.github.com/repos/BayanDocs/docs/pulls/7")
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(request.get_header("Authorization"), f"Bearer {self.TOKEN}")
+        self.assertIsNone(check_dco._NoRedirects().redirect_request(request, None, 302, "Found", {}, "https://example.test/"))
+
+    def test_errors_stop_the_check_without_showing_the_token(self) -> None:
+        refusal = urllib.error.HTTPError("https://api.github.com/repos/BayanDocs/docs/pulls/7", 403, "Forbidden", {}, io.BytesIO(b"{}"))  # type: ignore[arg-type]
+        for opener, expected in ((self.opener(error=refusal), "HTTP 403"), (self.opener(error=urllib.error.URLError("down")), "URLError"), (self.opener([]), "is not a pull request")):
+            with self.subTest(expected), mock.patch.dict(os.environ, self.ENVIRONMENT), mock.patch.object(check_dco.urllib.request, "build_opener", return_value=opener), self.assertRaises(check_dco.CheckError) as stop:
+                check_dco.github_pull_request(7)
+            self.assertIn(expected, str(stop.exception))
+            self.assertNotIn(self.TOKEN, str(stop.exception))
+
+    def test_it_needs_the_token_and_the_repository(self) -> None:
+        for environment in ({"GITHUB_REPOSITORY": "BayanDocs/docs", "GITHUB_TOKEN": ""}, {"GITHUB_REPOSITORY": "../evil", "GITHUB_TOKEN": self.TOKEN}):
+            with self.subTest(environment), mock.patch.dict(os.environ, environment), self.assertRaises(check_dco.CheckError):
+                check_dco.github_pull_request(7)
 
 
 class AnnotationTests(unittest.TestCase):
