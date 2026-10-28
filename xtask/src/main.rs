@@ -2,7 +2,7 @@
 //!
 //! - `verify`: the verification gate that CI runs and that must pass before every push.
 //! - `sqlx-prepare [--check]`: regenerates (or, with `--check`, verifies) the committed sqlx query metadata against scratch SQLite and PostgreSQL databases.
-//! - `test-postgres`: runs the PostgreSQL integration test against the server named by `BAYAN_TEST_POSTGRES_URL`.
+//! - `test-postgres`: runs the tests that need PostgreSQL against the database named by `BAYAN_TEST_POSTGRES_URL`: the server with PostgreSQL, and the comparison of the schemas that both backends' migrations create.
 //! - `check-exact-pins` and `check-lockfile-age [--base <revision>]`: the supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003; see `supply_chain/`, which is identical in bayan-core). `verify` runs both. `check-exact-pins` also checks the MLS spike's workspace; `check-lockfile-age` checks the server's `Cargo.lock` only (see `supply_chain_checks`).
 //! - `mls-spike-wasm [node | chromium]`, `mls-spike-bench <native | node | chromium>` and `mls-spike-wasm-size`: the WebAssembly tests, measurements and size report of the MLS spike (`spikes/mls`, work package SRV-002; see [`mls_spike`]).
 //!
@@ -263,15 +263,16 @@ fn prepare_backend(root: &Path, work: &Path, krate: &str, url: &str, check: bool
     Ok(())
 }
 
-/// Runs the PostgreSQL integration test (it is `#[ignore]`d in normal test runs because it needs a server).
+/// Runs the tests that need PostgreSQL (they are `#[ignore]`d in normal test runs because they need a server): `tests/postgres.rs`, the server with PostgreSQL, and `tests/migrations.rs`, which compares the schemas that both backends' migrations create, in a schema of its own that it creates and drops.
 fn test_postgres() -> Result {
     if std::env::var_os("BAYAN_TEST_POSTGRES_URL").is_none() {
         return Err(
-            "set BAYAN_TEST_POSTGRES_URL to the URL of an empty PostgreSQL database".to_owned(),
+            "set BAYAN_TEST_POSTGRES_URL to the URL of an empty PostgreSQL database owned by its user"
+                .to_owned(),
         );
     }
     step(
-        "PostgreSQL integration test",
+        "PostgreSQL integration tests",
         cargo(&[
             "test",
             "--locked",
@@ -279,6 +280,8 @@ fn test_postgres() -> Result {
             "bayan-server",
             "--test",
             "postgres",
+            "--test",
+            "migrations",
             "--",
             "--ignored",
             "--nocapture",

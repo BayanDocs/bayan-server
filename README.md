@@ -29,7 +29,7 @@ You need the Rust toolchain pinned in `rust-toolchain.toml` (rustup installs it 
 ```sh
 cargo xtask verify                 # the full verification gate: format, lint, test, docs, cargo deny
 cargo run -p bayan-server          # run locally on 127.0.0.1:8080 with SQLite in ./data
-BAYAN_TEST_POSTGRES_URL=postgres://… cargo xtask test-postgres         # PostgreSQL integration test
+BAYAN_TEST_POSTGRES_URL=postgres://… cargo xtask test-postgres         # PostgreSQL integration tests, with the comparison of both backends' migrated schemas
 BAYAN_SQLX_POSTGRES_URL=postgres://… cargo xtask sqlx-prepare         # regenerate query metadata after changing queries or migrations
 scripts/container-smoke-test.sh bayan-server                          # check a built image
 ```
