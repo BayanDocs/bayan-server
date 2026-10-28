@@ -31,6 +31,26 @@ const BAYAN_WEB_HEADERS: [(&str, &str); 8] = [
     ("Integrity-Policy", "blocked-destinations=(script)"),
 ];
 
+/// The headers that the server sends for itself, which [`assert_security_headers`] allows next to bayan-web's. None of them sets a security policy. A header in neither list fails the test, so that adding one takes a decision: a security header joins bayan-web's set first.
+const SERVER_HEADERS: [&str; 10] = [
+    // What the body is: its type and length.
+    "content-type",
+    "content-length",
+    // `no-store` on the server's own answers (health, readiness, version).
+    "cache-control",
+    // Static files (tower-http's `ServeDir`): when the file changed and its version tag, with which a browser revalidates a cached copy, and that byte ranges may be requested.
+    "last-modified",
+    "etag",
+    "accept-ranges",
+    // The methods a route allows, which axum adds when a request uses another method (the 405 test, and the 413 test, which posts to a GET route).
+    "allow",
+    // From hyper: when the answer was made, and that the connection closes, as the tests' requests ask.
+    "date",
+    "connection",
+    // The request's opaque ID, which matches a report with the log (`src/http/request_id.rs`).
+    "x-request-id",
+];
+
 /// Header names in lower case (HTTP header names are case-insensitive) mapped to their values.
 fn by_name<'a>(headers: &[(&str, &'a str)]) -> BTreeMap<String, &'a str> {
     let map: BTreeMap<String, &str> = headers
@@ -56,19 +76,27 @@ fn security_headers_are_bayan_webs() {
     assert_eq!(server, web);
 }
 
-/// Asserts that `response` carries each of bayan-web's security headers exactly once, with bayan-web's value.
+/// Asserts that `response` carries each of bayan-web's security headers exactly once, with bayan-web's value, and no header that is neither one of them nor in [`SERVER_HEADERS`].
 fn assert_security_headers(response: &common::Response) {
-    for (name, value) in by_name(&BAYAN_WEB_HEADERS) {
+    let web = by_name(&BAYAN_WEB_HEADERS);
+    for (name, value) in &web {
         let sent: Vec<&str> = response
             .headers
             .iter()
-            .filter(|(header, _)| *header == name)
+            .filter(|(header, _)| header == name)
             .map(|(_, value)| value.as_str())
             .collect();
         assert_eq!(
             sent,
-            [value],
+            [*value],
             "header {name} on a {} response",
+            response.status
+        );
+    }
+    for (name, _) in &response.headers {
+        assert!(
+            web.contains_key(name) || SERVER_HEADERS.contains(&name.as_str()),
+            "header {name} on a {} response is neither one of bayan-web's security headers nor in SERVER_HEADERS",
             response.status
         );
     }
