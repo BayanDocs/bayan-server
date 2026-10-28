@@ -3,7 +3,7 @@
 //! - `both_backends_have_the_same_migrations` compares the migrations' versions, descriptions and kinds. It needs no database.
 //! - `both_backends_create_the_same_schema` migrates a fresh SQLite database and a fresh PostgreSQL schema and compares what they contain: the same tables; the same columns, with the same nullability and corresponding types (see [`TYPE_MAPPING`]); the same primary keys; and the same indexes. It needs PostgreSQL, so it is ignored in normal test runs; `cargo xtask test-postgres` runs it with `BAYAN_TEST_POSTGRES_URL` set (CI does this against a PostgreSQL service container).
 //!
-//! Column defaults, `CHECK` constraints and foreign keys are not compared.
+//! Column defaults, `CHECK` constraints and foreign keys are not compared, nor are an index's `WHERE` condition (only whether it has one), its sort order and its collations: like defaults and `CHECK` expressions, they are written in each database's own dialect.
 
 mod common;
 
@@ -52,7 +52,7 @@ struct Index {
     /// The indexed columns in order, an expression as [`EXPRESSION`].
     columns: Vec<String>,
     unique: bool,
-    /// Whether the index covers only the rows that its `WHERE` clause selects.
+    /// Whether the index has a `WHERE` clause, which limits it to the rows the clause selects. The condition itself is not compared.
     partial: bool,
 }
 
@@ -108,26 +108,32 @@ async fn both_backends_create_the_same_schema() {
     let sqlite = sqlite_schema(&sqlite_pool).await;
     sqlite_pool.close().await;
 
-    // A schema of its own is a fresh database for everything the migrations create, and leaves the database's other contents alone. Its name holds only the prefix and digits, so it needs no quoting.
+    // A schema of its own stands in for a fresh database and leaves the database's other contents alone. It equals a fresh database only while no migration creates an extension or a role, or names a schema, and no `sqlx.toml` sets `create-schemas` or a schema for the migrations table, because all of these reach beyond the schema; a migration that needs any of them must switch this test to a fresh database. The schema's name holds only the prefix and digits, so it needs no quoting.
     let schema = format!("bayan_test_migrations_{}", std::process::id());
     let admin = bayan_db_postgres::connect(&url, 1)
         .await
         .expect("connect to PostgreSQL");
     execute(&admin, &format!("DROP SCHEMA IF EXISTS {schema} CASCADE")).await;
     execute(&admin, &format!("CREATE SCHEMA {schema}")).await;
-    // Every connection of this pool finds and creates tables in that schema only.
+    // Every connection of this pool finds and creates tables in that schema only. Migrating and describing it run in a task of their own, so that the schema is dropped even when they fail; the failure is reported once the schema is gone.
     let separator = if url.contains('?') { '&' } else { '?' };
-    let postgres_pool =
-        bayan_db_postgres::connect(&format!("{url}{separator}options[search_path]={schema}"), 1)
+    let schema_url = format!("{url}{separator}options[search_path]={schema}");
+    let postgres = tokio::spawn(async move {
+        let pool = bayan_db_postgres::connect(&schema_url, 1)
             .await
             .expect("connect to PostgreSQL with the test schema");
-    bayan_db_postgres::migrate(&postgres_pool)
-        .await
-        .expect("migrate the PostgreSQL schema");
-    let postgres = postgres_schema(&postgres_pool).await;
-    postgres_pool.close().await;
+        bayan_db_postgres::migrate(&pool)
+            .await
+            .expect("migrate the PostgreSQL schema");
+        let described = postgres_schema(&pool).await;
+        pool.close().await;
+        described
+    })
+    .await;
     execute(&admin, &format!("DROP SCHEMA {schema} CASCADE")).await;
     admin.close().await;
+    let postgres =
+        postgres.unwrap_or_else(|failure| std::panic::resume_unwind(failure.into_panic()));
 
     assert!(!sqlite.is_empty(), "the migrations create tables");
     assert_eq!(
