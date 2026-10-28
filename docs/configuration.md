@@ -67,7 +67,7 @@ Every response carries an `x-request-id` header with the ID from the log, so a u
 | `GET /readyz` | Readiness: `200 ready` when the database is reachable and migrated, otherwise `503 not ready`. |
 | `GET /version` | `{"name":"bayan-server","version":"…","commit":"…"}`. |
 
-Every response carries the security headers of ADR-0014: a strict Content Security Policy (same-origin scripts plus WebAssembly only, Trusted Types required), `Integrity-Policy` (scripts need Subresource Integrity), cross-origin isolation, `nosniff`, `no-referrer`, frame denial and a restrictive `Permissions-Policy`. The exact values are in `crates/bayan-server/src/http/headers.rs`.
+Every response carries the security headers of ADR-0014, the same set, header by header, that the web app's own servers send (bayan-web's `config/security-headers.ts`): a strict Content Security Policy (same-origin scripts plus WebAssembly only, no forms, no frames inside the page, no framing of the page by other sites, and Trusted Types with exactly one policy, `bayan-script-url`), `Integrity-Policy` (scripts need Subresource Integrity), cross-origin isolation, `nosniff`, `no-referrer` and a restrictive `Permissions-Policy`. The exact values are in `crates/bayan-server/src/http/headers.rs`.
 
 ## Command line
 
