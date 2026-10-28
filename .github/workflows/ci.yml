@@ -27,7 +27,7 @@ env:
 
 jobs:
   supply-chain:
-    # First, and needed by the jobs that build: no code of a dependency these checks reject (its build script, procedural macros or tests) may run before they pass. They compile only xtask, which has no dependencies. check-exact-pins covers the server's workspace and the MLS spike's (spikes/mls, which has its own Cargo.lock); check-lockfile-age covers the server's Cargo.lock only (xtask/src/main.rs says why). The verification gate runs them again as its first step.
+    # First, and needed by the jobs that build: no code of a dependency these checks reject (its build script, procedural macros or tests) may run before they pass. They compile only xtask, which has no dependencies. Both cover every Cargo workspace whose Cargo.lock Git tracks: the server's and the MLS spike's (spikes/mls, which has its own Cargo.lock), so the spike's dependencies are checked before the mls-spike job builds them (bayan-core#22). The verification gate runs them again as its first step.
     name: Supply-chain checks
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -36,14 +36,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The full history: `cargo xtask check-lockfile-age` compares Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
+          # The full history: `cargo xtask check-lockfile-age` compares each Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
       - name: Every dependency is pinned exactly (cargo xtask check-exact-pins)
         run: cargo xtask check-exact-pins
-      - name: Cargo builds exactly what Cargo.lock lists, and every new package version is at least 24 hours old, with the checksum crates.io published (cargo xtask check-lockfile-age)
+      - name: Cargo builds exactly what each Cargo.lock lists, and every new package version is at least 24 hours old, with the checksum crates.io published (cargo xtask check-lockfile-age)
         run: cargo xtask check-lockfile-age
 
   verify:
@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The full history: `cargo xtask check-lockfile-age` compares Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
+          # The full history: `cargo xtask check-lockfile-age` compares each Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
