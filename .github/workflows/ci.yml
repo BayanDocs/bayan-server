@@ -1,4 +1,4 @@
-# Continuous integration for bayan-server (SRV-001): the supply-chain checks first (X-003), then the verification gate, the PostgreSQL integration test, and the container build, smoke test and vulnerability scan, on every pull request, in the merge queue, on pushes to main and nightly; and for the MLS spike (SRV-002, spikes/mls) its tests in WebAssembly.
+# Continuous integration for bayan-server (SRV-001): the supply-chain checks first (X-003), then the verification gate, the PostgreSQL integration tests (with the comparison of both database backends' migrated schemas), and the container build, smoke test and vulnerability scan, on every pull request, in the merge queue, on pushes to main and nightly; and for the MLS spike (SRV-002, spikes/mls) its tests in WebAssembly.
 # Conventions (ADR-0017, X-002): every action pinned to a full commit SHA with its version in a comment, no permissions beyond reading the repository, timeouts on every job, no credentials left in the checkout, first-party actions only.
 name: CI
 
@@ -112,7 +112,7 @@ jobs:
             ~/.cargo/registry/cache/
             target/
           key: postgres-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-      - name: The server starts with PostgreSQL (cargo xtask test-postgres)
+      - name: The server starts with PostgreSQL, and both backends' migrations create the same schema (cargo xtask test-postgres)
         run: cargo xtask test-postgres
       - name: Committed sqlx query metadata matches migrations and queries (cargo xtask sqlx-prepare --check)
         run: cargo xtask sqlx-prepare --check

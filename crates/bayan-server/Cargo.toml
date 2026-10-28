@@ -24,6 +24,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+# tests/migrations.rs reads both databases' schemas with plain queries; the same features as the backend crates, so nothing new is built.
+sqlx = { workspace = true, features = ["postgres", "sqlite-bundled"] }
 tokio = { workspace = true, features = ["io-util"] }
 
 [lints]

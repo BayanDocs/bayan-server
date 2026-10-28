@@ -2,20 +2,101 @@
 
 mod common;
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use axum::Router;
 use axum::routing::get;
 use bayan_server::config::{Config, DatabaseConfig, SQLITE_FILE_NAME};
-use bayan_server::http::SECURITY_HEADERS;
+use bayan_server::http::{CONTENT_SECURITY_POLICY, SECURITY_HEADERS};
 use common::{Server, TempDir, config};
 
+/// bayan-web's security headers, copied by hand from bayan-web at commit 01c59788fa755eea8665332d88b18174a90e1a22 (the head of its `main` when this copy was taken, on 2026-10-28): `productionHeaders` in `config/security-headers.ts`, whose policy `serializeCsp` builds from `cspDirectives`, and which `deploy/nginx/security-headers.conf` repeats line by line (a unit test in bayan-web keeps those two equal).
+///
+/// The server must send exactly these, header by header (ADR-0014 and its amendment of 2026-10-12). It never reads bayan-web's files, so this copy is how drift on either side shows up in review: when bayan-web changes its headers, change `src/http/headers.rs`, this copy and the commit named here in one pull request.
+const BAYAN_WEB_HEADERS: [(&str, &str); 8] = [
+    (
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types bayan-script-url",
+    ),
+    ("Cross-Origin-Opener-Policy", "same-origin"),
+    ("Cross-Origin-Embedder-Policy", "require-corp"),
+    ("Cross-Origin-Resource-Policy", "same-origin"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    (
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=()",
+    ),
+    ("Integrity-Policy", "blocked-destinations=(script)"),
+];
+
+/// The headers that the server sends for itself, which [`assert_security_headers`] allows next to bayan-web's. None of them sets a security policy. A header in neither list fails the test, so that adding one takes a decision: a security header joins bayan-web's set first.
+const SERVER_HEADERS: [&str; 10] = [
+    // What the body is: its type and length.
+    "content-type",
+    "content-length",
+    // `no-store` on the server's own answers (health, readiness, version).
+    "cache-control",
+    // Static files (tower-http's `ServeDir`): when the file changed and its version tag, with which a browser revalidates a cached copy, and that byte ranges may be requested.
+    "last-modified",
+    "etag",
+    "accept-ranges",
+    // The methods a route allows, which axum adds when a request uses another method (the 405 test, and the 413 test, which posts to a GET route).
+    "allow",
+    // From hyper: when the answer was made, and that the connection closes, as the tests' requests ask.
+    "date",
+    "connection",
+    // The request's opaque ID, which matches a report with the log (`src/http/request_id.rs`).
+    "x-request-id",
+];
+
+/// Header names in lower case (HTTP header names are case-insensitive) mapped to their values.
+fn by_name<'a>(headers: &[(&str, &'a str)]) -> BTreeMap<String, &'a str> {
+    let map: BTreeMap<String, &str> = headers
+        .iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), *value))
+        .collect();
+    assert_eq!(map.len(), headers.len(), "a header is listed twice");
+    map
+}
+
+#[test]
+fn security_headers_are_bayan_webs() {
+    let server = by_name(&SECURITY_HEADERS);
+    let web = by_name(&BAYAN_WEB_HEADERS);
+    // The policy directive by directive first, so that a difference is easy to read.
+    let directives = |policy: &str| policy.split("; ").map(str::to_owned).collect::<Vec<_>>();
+    assert_eq!(
+        directives(CONTENT_SECURITY_POLICY),
+        directives(web["content-security-policy"])
+    );
+    assert_eq!(server["content-security-policy"], CONTENT_SECURITY_POLICY);
+    // No header missing, none added, every value equal.
+    assert_eq!(server, web);
+}
+
+/// Asserts that `response` carries each of bayan-web's security headers exactly once, with bayan-web's value, and no header that is neither one of them nor in [`SERVER_HEADERS`].
 fn assert_security_headers(response: &common::Response) {
-    for (name, value) in SECURITY_HEADERS {
+    let web = by_name(&BAYAN_WEB_HEADERS);
+    for (name, value) in &web {
+        let sent: Vec<&str> = response
+            .headers
+            .iter()
+            .filter(|(header, _)| header == name)
+            .map(|(_, value)| value.as_str())
+            .collect();
         assert_eq!(
-            response.header(name),
-            Some(value),
+            sent,
+            [*value],
             "header {name} on a {} response",
+            response.status
+        );
+    }
+    for (name, _) in &response.headers {
+        assert!(
+            web.contains_key(name) || SERVER_HEADERS.contains(&name.as_str()),
+            "header {name} on a {} response is neither one of bayan-web's security headers nor in SERVER_HEADERS",
             response.status
         );
     }
@@ -36,6 +117,7 @@ async fn starts_with_sqlite_by_default() {
     let ready = common::get(server.addr, "/readyz").await;
     assert_eq!(ready.status, 200);
     assert_eq!(ready.body_text(), "ready\n");
+    assert_security_headers(&ready);
     assert!(
         data.path().join(SQLITE_FILE_NAME).is_file(),
         "the SQLite database is created in the data directory"
@@ -70,10 +152,12 @@ async fn health_and_version_endpoints() {
     .await;
     assert_eq!(head.status, 200);
     assert!(head.body.is_empty());
+    assert_security_headers(&head);
 
     let version = common::get(server.addr, "/version").await;
     assert_eq!(version.status, 200);
     assert_eq!(version.header("content-type"), Some("application/json"));
+    assert_security_headers(&version);
     let expected = format!(
         "{{\"name\":\"bayan-server\",\"version\":\"{}\",\"commit\":\"{}\"}}",
         env!("CARGO_PKG_VERSION"),
