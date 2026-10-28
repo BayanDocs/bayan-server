@@ -2,35 +2,91 @@
 //!
 //! Two views of the dependencies are checked, so that neither can be used to slip past the other:
 //!
-//! 1. Every entry of `[workspace.dependencies]` in the root `Cargo.toml`, as written: a crates.io dependency has an exact `=x.y.z` version requirement (Cargo reads a plain `"1.2.3"` as "1.2.3 or any later 1.x"), a path dependency points to a workspace member, and a Git dependency names a fixed `rev` or `tag` (never a branch). An entry may not name another registry.
+//! 1. Every entry of `[workspace.dependencies]` in the workspace's root `Cargo.toml`, as written: a crates.io dependency has an exact `=x.y.z` version requirement (Cargo reads a plain `"1.2.3"` as "1.2.3 or any later 1.x"), a path dependency points to a workspace member, and a Git dependency names a fixed `rev` or `tag` (never a branch). An entry may not name another registry.
 //! 2. Every dependency of every workspace member, as Cargo resolves the manifests (`cargo metadata`): the same rules, also for a dependency that a member declares itself instead of inheriting it with `name.workspace = true`.
+//!
+//! Both views are checked in every workspace of the repository (`workspace.rs`): the main workspace at the root, and each secondary workspace below it, such as bayan-core's `fuzz/`. A secondary workspace's path dependencies may also point to members of the main workspace, whose own dependencies are checked with the main workspace; the main workspace's may not point outside it.
 //!
 //! Exact pins make the versions in `Cargo.lock` the only ones that can be built, so `cargo update` cannot move a dependency without a reviewed change to the manifests.
 
-use std::path::{Path, PathBuf};
+use std::collections::BTreeSet;
+use std::path::Path;
 
 use super::cargo;
 use super::json::{self, Value};
 use super::manifest::{self, Dependency};
+use super::workspace::{self, Members, Workspace};
 
-/// Runs the check for the workspace at `root`, reporting what it checked through `report`.
+/// Runs the check for every workspace of the repository at `root`, reporting what it checked through `report`.
 pub fn check(root: &Path, report: &mut dyn FnMut(&str)) -> Result<(), String> {
-    let manifest_path = root.join("Cargo.toml");
+    let main = Workspace::main(root);
+    let secondary = workspace::secondary(root)?;
+    let main_metadata = metadata(&main)?;
+    let main_members = Members::from_metadata(&main_metadata)?;
+    let mut problems = check_workspace(
+        &main,
+        &main_metadata,
+        &Allowed {
+            own: &main_members,
+            main: None,
+        },
+        report,
+    )?;
+    for workspace in &secondary {
+        let metadata = metadata(workspace)?;
+        let members = Members::from_metadata(&metadata)?;
+        problems.extend(check_workspace(
+            workspace,
+            &metadata,
+            &Allowed {
+                own: &members,
+                main: Some(&main_members),
+            },
+            report,
+        )?);
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "dependencies must be pinned exactly (ADR-0017 rule 5):\n  - {}\nDeclare each third-party dependency once in [workspace.dependencies] of the workspace's root Cargo.toml with an exact version, such as `name = \"=1.2.3\"`, and use it in a crate with `name.workspace = true`. A path dependency may point only to a member of the crate's own workspace or, from a secondary workspace (a folder below the root with its own Cargo.lock), to a member of the main workspace.",
+            problems.join("\n  - ")
+        ))
+    }
+}
+
+/// Cargo's description of the members of `workspace` (`cargo metadata --no-deps`), after checking that Cargo reads its folder as the root of a workspace.
+fn metadata(workspace: &Workspace) -> Result<Value, String> {
+    let metadata = json::parse(&cargo::metadata(&workspace.folder, &["--no-deps"])?)?;
+    workspace::check_root(workspace, &metadata)?;
+    Ok(metadata)
+}
+
+/// Checks `workspace`, whose members `metadata` describes and whose path dependencies may point to `allowed`, reports what it checked if it found nothing wrong, and returns the problems it found.
+fn check_workspace(
+    workspace: &Workspace,
+    metadata: &Value,
+    allowed: &Allowed<'_>,
+    report: &mut dyn FnMut(&str),
+) -> Result<Vec<String>, String> {
+    let manifest = workspace.file("Cargo.toml");
+    let manifest_path = workspace.folder.join("Cargo.toml");
     let text = std::fs::read_to_string(&manifest_path)
         .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?;
-    let declared = manifest::workspace_dependencies(&text)?;
-    let metadata = json::parse(&cargo::metadata(root, &["--no-deps"])?)?;
-    let members = Members::from_metadata(&metadata)?;
+    let declared = manifest::workspace_dependencies(&text)
+        .map_err(|problem| workspace.locate("Cargo.toml", problem))?;
     let mut problems = Vec::new();
     for dependency in &declared {
-        if let Err(problem) = check_declared(dependency, root, &members) {
+        if let Err(problem) = check_declared(dependency, &workspace.folder, allowed) {
             problems.push(format!(
-                "[workspace.dependencies] `{}` (Cargo.toml line {}): {problem}",
+                "[workspace.dependencies] `{}` ({manifest} line {}): {problem}",
                 dependency.name, dependency.line
             ));
         }
     }
     let mut used = 0;
+    // The members of the main workspace that a secondary workspace depends on by path.
+    let mut on_main = BTreeSet::new();
     for package in metadata
         .get("packages")
         .and_then(Value::as_array)
@@ -43,64 +99,90 @@ pub fn check(root: &Path, report: &mut dyn FnMut(&str)) -> Result<(), String> {
             .unwrap_or_default()
         {
             used += 1;
-            if let Err(problem) = check_resolved(dependency, &members) {
-                problems.push(format!(
+            match check_resolved(dependency, allowed) {
+                Ok(()) => {
+                    if let Some(member) = dependency
+                        .string("path")
+                        .and_then(|path| allowed.on_main(Path::new(path)))
+                    {
+                        on_main.insert(member.to_owned());
+                    }
+                }
+                Err(problem) => problems.push(format!(
                     "{package_name} depends on `{}`: {problem}",
                     dependency.string("name").unwrap_or("?")
-                ));
+                )),
             }
         }
     }
-    if problems.is_empty() {
+    if !problems.is_empty() {
+        return Ok(problems);
+    }
+    if workspace.is_main() {
         report(&format!(
             "all {} entries of [workspace.dependencies] and all {used} dependencies of the {} workspace members are pinned exactly",
             declared.len(),
-            members.folders.len()
+            allowed.own.count()
         ));
-        Ok(())
     } else {
-        Err(format!(
-            "dependencies must be pinned exactly (ADR-0017 rule 5):\n  - {}\nDeclare each third-party dependency once in [workspace.dependencies] of the root Cargo.toml with an exact version, such as `name = \"=1.2.3\"`, and use it in a crate with `name.workspace = true`.",
-            problems.join("\n  - ")
-        ))
+        let members = match allowed.own.count() {
+            1 => "1 workspace member".to_owned(),
+            count => format!("{count} workspace members"),
+        };
+        let entries = match declared.len() {
+            0 => ", and it has no [workspace.dependencies]".to_owned(),
+            count => format!(", and so are all {count} entries of its [workspace.dependencies]"),
+        };
+        let on_main = if on_main.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; it depends by path on members of the main workspace ({}), whose own dependencies the main workspace's check covers",
+                on_main.into_iter().collect::<Vec<_>>().join(", ")
+            )
+        };
+        report(&format!(
+            "{manifest}: all {used} dependencies of its {members} are pinned exactly{entries}{on_main}"
+        ));
     }
+    Ok(problems)
 }
 
-/// The folders of the workspace members, to recognize path dependencies on them.
-struct Members {
-    folders: Vec<PathBuf>,
+/// The folders that a workspace's path dependencies may point to: its own members', and for a secondary workspace also the main workspace's.
+struct Allowed<'a> {
+    /// The members of the workspace being checked.
+    own: &'a Members,
+    /// The members of the main workspace, when the workspace being checked is a secondary one.
+    main: Option<&'a Members>,
 }
 
-impl Members {
-    fn from_metadata(metadata: &Value) -> Result<Self, String> {
-        let mut folders = Vec::new();
-        for package in metadata
-            .get("packages")
-            .and_then(Value::as_array)
-            .ok_or("`cargo metadata` lists no packages")?
-        {
-            let manifest = package
-                .string("manifest_path")
-                .ok_or("`cargo metadata` names a package without a manifest path")?;
-            if let Some(folder) = Path::new(manifest).parent() {
-                folders.push(canonical(folder));
-            }
-        }
-        Ok(Self { folders })
-    }
-
+impl Allowed<'_> {
+    /// Whether a path dependency may point to `folder`.
     fn contains(&self, folder: &Path) -> bool {
-        self.folders.contains(&canonical(folder))
+        self.own.at(folder).is_some() || self.on_main(folder).is_some()
+    }
+
+    /// The name of the member of the main workspace whose folder is `folder`, when the workspace being checked is a secondary one.
+    fn on_main(&self, folder: &Path) -> Option<&str> {
+        self.main.and_then(|main| main.at(folder))
+    }
+
+    /// What a path dependency must point to, for messages.
+    fn expected(&self) -> &'static str {
+        if self.main.is_some() {
+            "the folder of a member of this workspace or of the main workspace"
+        } else {
+            "the folder of a workspace member"
+        }
     }
 }
 
-/// The folder with links resolved, for comparisons; the folder as given if it does not exist.
-fn canonical(folder: &Path) -> PathBuf {
-    std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf())
-}
-
-/// Checks one entry of `[workspace.dependencies]`.
-fn check_declared(dependency: &Dependency, root: &Path, members: &Members) -> Result<(), String> {
+/// Checks one entry of `[workspace.dependencies]` of the workspace in `folder`, whose path dependencies may point to `allowed`.
+fn check_declared(
+    dependency: &Dependency,
+    folder: &Path,
+    allowed: &Allowed<'_>,
+) -> Result<(), String> {
     for key in ["registry", "registry-index"] {
         if dependency.has(key) {
             return Err(format!(
@@ -118,8 +200,8 @@ fn check_declared(dependency: &Dependency, root: &Path, members: &Members) -> Re
         let path = dependency
             .field("path")
             .ok_or("its path is not a plain string")?;
-        if !members.contains(&root.join(path)) {
-            return Err(format!("`{path}` is not the folder of a workspace member"));
+        if !allowed.contains(&folder.join(path)) {
+            return Err(format!("`{path}` is not {}", allowed.expected()));
         }
         return Ok(());
     }
@@ -147,19 +229,17 @@ fn check_declared(dependency: &Dependency, root: &Path, members: &Members) -> Re
     Ok(())
 }
 
-/// Checks one dependency of a workspace member, as `cargo metadata` describes it.
-fn check_resolved(dependency: &Value, members: &Members) -> Result<(), String> {
+/// Checks one dependency of a workspace member, as `cargo metadata` describes it, in a workspace whose path dependencies may point to `allowed`.
+fn check_resolved(dependency: &Value, allowed: &Allowed<'_>) -> Result<(), String> {
     match dependency.string("source") {
         None => {
             let path = dependency
                 .string("path")
                 .ok_or("it has neither a source nor a path")?;
-            if members.contains(Path::new(path)) {
+            if allowed.contains(Path::new(path)) {
                 Ok(())
             } else {
-                Err(format!(
-                    "its path {path} is not the folder of a workspace member"
-                ))
+                Err(format!("its path {path} is not {}", allowed.expected()))
             }
         }
         Some(source) if source.starts_with("registry+") || source.starts_with("sparse+") => {
@@ -244,20 +324,24 @@ fn exact(requirement: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::git::testing::TestRepository;
     use super::*;
 
     fn members(root: &Path) -> Members {
-        Members {
-            folders: vec![canonical(&root.join("crates").join("own"))],
-        }
+        Members::of(&[("own", &root.join("crates").join("own"))])
     }
 
     fn declared(text: &str) -> Vec<Result<(), String>> {
         let root = std::env::temp_dir();
+        let members = members(&root);
+        let allowed = Allowed {
+            own: &members,
+            main: None,
+        };
         manifest::workspace_dependencies(&format!("[workspace.dependencies]\n{text}"))
             .unwrap()
             .iter()
-            .map(|dependency| check_declared(dependency, &root, &members(&root)))
+            .map(|dependency| check_declared(dependency, &root, &allowed))
             .collect()
     }
 
@@ -335,7 +419,14 @@ mod tests {
 
     fn resolved(json_text: &str) -> Result<(), String> {
         let root = std::env::temp_dir();
-        check_resolved(&json::parse(json_text).unwrap(), &members(&root))
+        let members = members(&root);
+        check_resolved(
+            &json::parse(json_text).unwrap(),
+            &Allowed {
+                own: &members,
+                main: None,
+            },
+        )
     }
 
     #[test]
@@ -417,5 +508,70 @@ mod tests {
     /// `text` as a JSON string, for paths that may contain backslashes (Windows).
     fn json_string(text: &str) -> String {
         format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+
+    /// A path dependency on `folder`, as `cargo metadata` describes it.
+    fn path_dependency(folder: &Path) -> Value {
+        json::parse(&format!(
+            "{{\"name\":\"x\",\"source\":null,\"req\":\"*\",\"path\":{}}}",
+            json_string(&folder.to_string_lossy())
+        ))
+        .unwrap()
+    }
+
+    /// A secondary workspace, such as bayan-core's `fuzz/`, may depend by path on members of the main workspace and on its own members, and on nothing else (AC-1 of bayan-core#22). The folders exist, so that `..` in a path written in a manifest resolves as it does in a real repository.
+    #[test]
+    fn a_secondary_workspace_may_depend_by_path_on_members_of_the_main_workspace() {
+        let test = TestRepository::new();
+        let root = test.path();
+        for folder in ["crates/own", "fuzz", "elsewhere"] {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        let main = members(root);
+        let fuzz = Members::of(&[("bayan-fuzz", &root.join("fuzz"))]);
+        let secondary = Allowed {
+            own: &fuzz,
+            main: Some(&main),
+        };
+        let own = root.join("crates").join("own");
+        assert_eq!(check_resolved(&path_dependency(&own), &secondary), Ok(()));
+        assert_eq!(secondary.on_main(&own), Some("own"));
+        assert_eq!(
+            check_resolved(&path_dependency(&root.join("fuzz")), &secondary),
+            Ok(())
+        );
+        assert_eq!(secondary.on_main(&root.join("fuzz")), None);
+        let problem =
+            check_resolved(&path_dependency(&root.join("elsewhere")), &secondary).unwrap_err();
+        assert!(
+            problem.contains(
+                "is not the folder of a member of this workspace or of the main workspace"
+            ),
+            "{problem}"
+        );
+        // The same, written in [workspace.dependencies] of the secondary workspace's root Cargo.toml, relative to its folder.
+        let entries = manifest::workspace_dependencies(
+            "[workspace.dependencies]\nown = { path = \"../crates/own\" }\nother = { path = \"../elsewhere\" }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            check_declared(&entries[0], &root.join("fuzz"), &secondary),
+            Ok(())
+        );
+        assert!(
+            check_declared(&entries[1], &root.join("fuzz"), &secondary)
+                .unwrap_err()
+                .contains("`../elsewhere` is not the folder of a member of this workspace or of the main workspace")
+        );
+        // The main workspace's rule does not change: its crates may not depend on a secondary workspace's.
+        let main_only = Allowed {
+            own: &main,
+            main: None,
+        };
+        assert!(
+            check_resolved(&path_dependency(&root.join("fuzz")), &main_only)
+                .unwrap_err()
+                .contains("is not the folder of a workspace member")
+        );
     }
 }

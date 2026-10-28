@@ -34,6 +34,31 @@ pub fn default_base() -> String {
     }
 }
 
+/// The files below `folder` that Git tracks, as paths relative to it with `/` between folders, in Git's order. It reads only Git's index, so it works in a shallow clone too.
+pub fn tracked_files(folder: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["ls-files", "-z"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| {
+            format!("could not run `git ls-files`: {error}\nThis check needs Git and a Git checkout of the repository.")
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "`git ls-files` failed: {}\nThis check needs Git and a Git checkout of the repository.",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output
+        .stdout
+        .split(|&byte| byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
+        .collect())
+}
+
 /// A Git working tree with its full history.
 pub struct Repository {
     root: PathBuf,
@@ -359,6 +384,24 @@ mod tests {
         let repository = Repository::open(test.path()).unwrap();
         let commits = repository.log(&["-1", "HEAD"]).unwrap();
         assert_eq!(commits[0].time(), 1_000_000_100);
+    }
+
+    #[test]
+    fn lists_the_files_git_tracks_below_a_folder() {
+        let test = TestRepository::new();
+        test.write("Cargo.lock", "");
+        test.write("fuzz/Cargo.lock", "");
+        test.write("fuzz/src/main.rs", "");
+        test.commit("files", 1_000_000_000);
+        test.write("untracked/Cargo.lock", "");
+        assert_eq!(
+            tracked_files(test.path()).unwrap(),
+            ["Cargo.lock", "fuzz/Cargo.lock", "fuzz/src/main.rs"]
+        );
+        assert_eq!(
+            tracked_files(&test.path().join("fuzz")).unwrap(),
+            ["Cargo.lock", "src/main.rs"]
+        );
     }
 
     #[test]

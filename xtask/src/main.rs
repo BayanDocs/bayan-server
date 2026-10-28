@@ -3,7 +3,7 @@
 //! - `verify`: the verification gate that CI runs and that must pass before every push.
 //! - `sqlx-prepare [--check]`: regenerates (or, with `--check`, verifies) the committed sqlx query metadata against scratch SQLite and PostgreSQL databases.
 //! - `test-postgres`: runs the tests that need PostgreSQL against the database named by `BAYAN_TEST_POSTGRES_URL`: the server with PostgreSQL, and the comparison of the schemas that both backends' migrations create.
-//! - `check-exact-pins` and `check-lockfile-age [--base <revision>]`: the supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003; see `supply_chain/`, which is identical in bayan-core). `verify` runs both. `check-exact-pins` also checks the MLS spike's workspace; `check-lockfile-age` checks the server's `Cargo.lock` only (see `supply_chain_checks`).
+//! - `check-exact-pins` and `check-lockfile-age [--base <revision>]`: the supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003; see `supply_chain/`, which is identical in bayan-core), in every Cargo workspace of the repository: the server's, and every folder below it where Git tracks a `Cargo.lock`, today the MLS spike's (`spikes/mls`, bayan-core#22). `verify` runs both (see `supply_chain_checks`).
 //! - `mls-spike-wasm [node | chromium]`, `mls-spike-bench <native | node | chromium>` and `mls-spike-wasm-size`: the WebAssembly tests, measurements and size report of the MLS spike (`spikes/mls`, work package SRV-002; see [`mls_spike`]).
 //!
 //! It uses only the standard library and runs the real tools with [`std::process::Command`].
@@ -110,29 +110,25 @@ fn verify() -> Result {
     Ok(())
 }
 
-/// The supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003, `supply_chain/`): every dependency is pinned exactly, Cargo builds exactly what `Cargo.lock` lists, and every package version that the change adds to `Cargo.lock` is at least 24 hours old and has the checksum crates.io published. The age check compares with the merge base of the branch the change goes into (`origin/<GITHUB_BASE_REF>` in a pull request on GitHub Actions, otherwise `origin/main`), so it needs the full Git history; it asks crates.io only when `Cargo.lock` changed, and `cargo metadata` downloads the crate files that Cargo's cache lacks, without building anything. The update-bot check and pip-audit run in the supply-chain workflow (`.github/workflows/supply-chain.yml`).
+/// The supply-chain checks of ADR-0017 that Cargo and cargo-deny do not make (work package X-003, `supply_chain/`): every dependency is pinned exactly, Cargo builds exactly what each `Cargo.lock` lists, and every package version that the change adds to a `Cargo.lock` is at least 24 hours old and has the checksum crates.io published. The age check compares each `Cargo.lock` with its own version at the merge base of the branch the change goes into (`origin/<GITHUB_BASE_REF>` in a pull request on GitHub Actions, otherwise `origin/main`), so it needs the full Git history; it asks crates.io only when a `Cargo.lock` changed, and `cargo metadata` downloads the crate files that Cargo's cache lacks, without building anything. The update-bot check and pip-audit run in the supply-chain workflow (`.github/workflows/supply-chain.yml`).
 ///
-/// The exact-pin check also covers the MLS spike's workspace ([`check_exact_pins`]); the age check covers the server's `Cargo.lock` only. Its first step requires `Cargo.lock` to list exactly the packages that `cargo metadata` resolves with the default features of the workspace's members, but Cargo resolves a lockfile with all their features, and the spike's `provisional-pq` feature brings 61 packages into its `Cargo.lock` that no build compiles: OpenMLS's post-quantum feature names its optional SQLite storage, libcrux provider and test helpers as weak `dependency?/feature` entries, which Cargo counts as switching them on when it resolves the lockfile. So that step rejects the spike's `Cargo.lock`. Passing `--all-features` to `cargo metadata` in `supply_chain/lockfile_age.rs` would fix it, in this repository and in bayan-core together, since `supply_chain/` is identical in both.
+/// Both checks read every Cargo workspace of the repository, which they find by the `Cargo.lock` files that Git tracks: the server's, and the MLS spike's (`spikes/mls`), which has its own manifests and `Cargo.lock` and so its own dependencies to check before anything of them is built (bayan-core#22). The age check resolves each workspace with every feature of its members switched on (`cargo metadata --all-features`), as Cargo resolves a lockfile, so it also checks the packages that only the spike's `provisional-pq` feature brings into its `Cargo.lock`, which no build compiles: OpenMLS's post-quantum feature names its optional SQLite storage, libcrux provider and test helpers as weak `dependency?/feature` entries, which Cargo counts as switching them on when it resolves the lockfile.
 fn supply_chain_checks() -> Result {
     check_exact_pins()?;
     let root = workspace_root()?;
     eprintln!(
-        "xtask: check-lockfile-age: Cargo builds exactly what Cargo.lock lists, and every package version added to it was published at least 24 hours before it was added (ADR-0017 rule 4), with the checksum crates.io published"
+        "xtask: check-lockfile-age: Cargo builds exactly what each Cargo.lock lists (the server's and spikes/mls/Cargo.lock), and every package version added to one was published at least 24 hours before it was added (ADR-0017 rule 4), with the checksum crates.io published"
     );
     supply_chain::lockfile_age::check(&root, None, &mut |line| report(line))
 }
 
-/// `cargo xtask check-exact-pins`: every dependency is pinned exactly, in the server's workspace and in the MLS spike's (`spikes/mls`), which has its own manifests and `Cargo.lock` and so its own dependencies to check before anything of them is built.
+/// `cargo xtask check-exact-pins`: every dependency is pinned exactly, in every Cargo workspace of the repository: the server's and the MLS spike's (see [`supply_chain_checks`]).
 fn check_exact_pins() -> Result {
     let root = workspace_root()?;
-    let spike = mls_spike::workspace(&root);
-    for (name, workspace) in [("server", root), ("MLS spike", spike)] {
-        eprintln!(
-            "xtask: check-exact-pins ({name}): every dependency is pinned exactly (ADR-0017 rule 5)"
-        );
-        supply_chain::exact_pins::check(&workspace, &mut |line| report(line))?;
-    }
-    Ok(())
+    eprintln!(
+        "xtask: check-exact-pins: every dependency of every workspace (the server's and spikes/mls) is pinned exactly (ADR-0017 rule 5)"
+    );
+    supply_chain::exact_pins::check(&root, &mut |line| report(line))
 }
 
 /// Prints one line of what a supply-chain check found.
