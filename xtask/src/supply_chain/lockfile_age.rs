@@ -1,6 +1,6 @@
 //! `cargo xtask check-lockfile-age`: every package version that a change adds to a `Cargo.lock` must have been published on crates.io at least 24 hours before the commit that added it, and before now (ADR-0017 rule 4), and must be exactly what crates.io published.
 //!
-//! Cargo enforces the minimum age itself only from Rust 1.100 (`global-min-publish-age` in `.cargo/config.toml`), and even then only when it resolves new versions: it never re-checks versions that are already in `Cargo.lock`. This check closes that gap for every pull request, in every workspace of the repository (`workspace.rs`): the main workspace at the root and each secondary workspace below it, such as bayan-core's `fuzz/`, each with its own `Cargo.lock`:
+//! Cargo enforces the minimum age itself only from Rust 1.100 (`global-min-publish-age` in `.cargo/config.toml`), and even then only when it resolves new versions: it never re-checks versions that are already in `Cargo.lock`. This check closes that gap for every pull request, in every workspace of the repository (`workspace.rs`): the main workspace at the root and each secondary workspace below it, such as bayan-core's `fuzz/`, each with its own `Cargo.lock`. It also fails when Git tracks a `Cargo.toml` that belongs to none of them, which Cargo could build from a lockfile that was never committed (`workspace::check_manifests`). In each workspace:
 //!
 //! 1. It makes sure that the `Cargo.lock` is what Cargo builds: the packages Cargo resolves (`cargo metadata`, with every feature of the workspace's members, as Cargo resolves the lockfile) must be exactly those of `Cargo.lock`, and every package outside the workspace must come from a registry or a Git repository, not from a folder. Otherwise a `lockfile-path` setting could make Cargo read another lockfile, and a `[patch]`, `[replace]` or `paths` override, or vendored sources, could build code from a folder in place of a crate that the lockfile lists, without either showing up below. The one exception is for secondary workspaces, which may build members of the main workspace from their folders: that code is in this repository, its own dependencies are checked with the main workspace, and their versions in the secondary `Cargo.lock` are checked below with that lockfile.
 //! 2. It finds the merge base of `HEAD` and the branch the change will be merged into (`origin/<GITHUB_BASE_REF>` in a pull request on GitHub Actions, otherwise `origin/main`, or the branch named with `--base`).
@@ -31,7 +31,7 @@ const CRATES_IO_SPARSE: &str = "sparse+https://index.crates.io/";
 /// The least time between two requests to the crates.io API (<https://crates.io/data-access>).
 const API_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Runs the check for every workspace of the repository at `root`, comparing with `base` (or the default base branch), and reports progress through `report`. A workspace that fails does not stop the others from being checked; the problems of all of them are returned together.
+/// Runs the check for every workspace of the repository at `root`, comparing with `base` (or the default base branch), and checks that every `Cargo.toml` that Git tracks belongs to one of them (`workspace::check_manifests`), reporting progress through `report`. A workspace that fails does not stop the others from being checked; the problems of all of them are returned together.
 pub fn check(root: &Path, base: Option<&str>, report: &mut dyn FnMut(&str)) -> Result<(), String> {
     let base = base.map_or_else(git::default_base, str::to_owned);
     let now = time::now()?;
@@ -52,8 +52,10 @@ pub fn check(root: &Path, base: Option<&str>, report: &mut dyn FnMut(&str)) -> R
     if let Err(problem) = check_workspace(&mut shared, &main, &main_metadata, None, report) {
         failures.push(problem);
     }
+    let mut secondary_members = Vec::new();
     for workspace in &secondary {
         let result = metadata(workspace).and_then(|metadata| {
+            secondary_members.push(Members::from_metadata(&metadata)?);
             check_workspace(
                 &mut shared,
                 workspace,
@@ -63,6 +65,15 @@ pub fn check(root: &Path, base: Option<&str>, report: &mut dyn FnMut(&str)) -> R
             )
         });
         if let Err(problem) = result {
+            failures.push(problem);
+        }
+    }
+    // The members of a workspace that Cargo cannot describe are not known, so the manifests are judged only once every workspace can be read; until then, that workspace's problem fails the check.
+    if secondary_members.len() == secondary.len() {
+        let members: Vec<&Members> = std::iter::once(&main_members)
+            .chain(&secondary_members)
+            .collect();
+        if let Err(problem) = workspace::check_manifests(root, &secondary, &members, report) {
             failures.push(problem);
         }
     }
@@ -435,9 +446,10 @@ mod tests {
         time::parse(text).unwrap()
     }
 
+    /// A `Cargo.lock` of the workspace member `app` (as in `metadata` and `locked`) and the given crates.io packages (name, version, checksum).
     fn lockfile(packages: &[(&str, &str, &str)]) -> String {
         let mut text = String::from(
-            "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n[[package]]\nname = \"bayan-server\"\nversion = \"0.1.0\"\ndependencies = [\n",
+            "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\n",
         );
         for (name, _, _) in packages {
             text.push_str(&format!(" \"{name}\",\n"));
@@ -1047,6 +1059,101 @@ mod tests {
         assert!(
             lines[0].starts_with("fuzz/Cargo.lock adds or changes no package version"),
             "{lines:?}"
+        );
+    }
+
+    /// `check_workspace` as `check` calls it, from Cargo's description of each workspace: for a secondary workspace, with the members of the main workspace, which it may build from their folders, and with the repository opened in its own folder, so that its `Cargo.lock` is compared with its own version at the merge base, although the main workspace's lockfile there already lists the version it adds; for the main workspace, without them.
+    #[test]
+    fn checks_each_workspace_against_its_own_lockfile() {
+        let test = TestRepository::new();
+        let root = test.path();
+        // The fuzz workspace's lockfile also lists the member of the main workspace that it builds from its folder.
+        let with_own =
+            |text: String| format!("{text}\n[[package]]\nname = \"own\"\nversion = \"0.1.0\"\n");
+        test.write("Cargo.lock", &lockfile(&[HYPER_1_12_0]));
+        test.write("crates/own/Cargo.toml", "");
+        test.write(
+            "fuzz/Cargo.lock",
+            &with_own(lockfile(&[HYPER_1_11_1, ZEROCOPY_0_8_60])),
+        );
+        let base = test.commit("base", time("2026-09-01T00:00:00Z"));
+        test.git(&["checkout", "--quiet", "-b", "change"], None);
+        test.write(
+            "fuzz/Cargo.lock",
+            &with_own(lockfile(&[HYPER_1_12_0, ZEROCOPY_0_8_60])),
+        );
+        test.commit("change", RECORDED_AT);
+        let own = root.join("crates").join("own");
+        let cache = std::env::temp_dir().join("bayandocs-xtask-cache");
+        let hyper = cache.join("hyper-1.12.0");
+        let zerocopy = cache.join("zerocopy-0.8.60");
+        let main_metadata = metadata(root, &[("hyper", "1.12.0", Some(CRATES_IO), &hyper)]);
+        let fuzz_metadata = metadata(
+            &root.join("fuzz"),
+            &[
+                ("own", "0.1.0", None, &own),
+                ("hyper", "1.12.0", Some(CRATES_IO), &hyper),
+                ("zerocopy", "0.8.60", Some(CRATES_IO), &zerocopy),
+            ],
+        );
+        let main_members = Members::of(&[("own", &own)]);
+        let fuzz = Workspace {
+            folder: root.join("fuzz"),
+            name: "fuzz".to_owned(),
+        };
+        let mut recorded = Recorded::crates_io();
+        let mut lines = Vec::new();
+        let (main_result, fuzz_result) = {
+            let mut shared = Shared {
+                root,
+                base: "main",
+                now: RECORDED_AT,
+                crates_io: CratesIo::new(&mut recorded, Duration::ZERO),
+            };
+            let mut report = |line: &str| lines.push(line.to_owned());
+            let main_result = check_workspace(
+                &mut shared,
+                &Workspace::main(root),
+                &main_metadata,
+                None,
+                &mut report,
+            );
+            let fuzz_result = check_workspace(
+                &mut shared,
+                &fuzz,
+                &fuzz_metadata,
+                Some(&main_members),
+                &mut report,
+            );
+            (main_result, fuzz_result)
+        };
+        assert_eq!(main_result, Ok(()));
+        let base = &base[..12];
+        assert_eq!(
+            lines[..4],
+            [
+                "Cargo builds exactly the 2 packages of Cargo.lock, and every package outside the workspace comes from a registry or a Git repository, not from a folder".to_owned(),
+                format!(
+                    "Cargo.lock adds or changes no package version since the merge base with main ({base}), so there is nothing to look up"
+                ),
+                "Cargo builds exactly the 4 packages of fuzz/Cargo.lock, and every package outside the workspace comes from a registry or a Git repository, not from a folder, except the members of the main workspace that it builds from their folders (own)".to_owned(),
+                format!(
+                    "fuzz/Cargo.lock adds or changes 1 package version(s) since the merge base with main ({base})"
+                ),
+            ]
+        );
+        assert!(lines[4].starts_with("TOO NEW: hyper 1.12.0"), "{lines:?}");
+        assert_eq!(recorded.requests, ["https://index.crates.io/hy/pe/hyper"]);
+        let problem = fuzz_result.unwrap_err();
+        assert!(
+            problem.starts_with("1 problem(s) with package versions in fuzz/Cargo.lock"),
+            "{problem}"
+        );
+        assert!(
+            problem.contains(
+                "hyper 1.12.0: published 2026-10-06 15:57 UTC, only 10 h 41 min before it was added"
+            ),
+            "{problem}"
         );
     }
 }

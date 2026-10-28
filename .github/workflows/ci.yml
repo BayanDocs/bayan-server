@@ -36,14 +36,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The full history: `cargo xtask check-lockfile-age` compares Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
+          # The full history: `cargo xtask check-lockfile-age` compares each Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
       - name: Every dependency is pinned exactly (cargo xtask check-exact-pins)
         run: cargo xtask check-exact-pins
-      - name: Cargo builds exactly what Cargo.lock lists, and every new package version is at least 24 hours old, with the checksum crates.io published (cargo xtask check-lockfile-age)
+      - name: Cargo builds exactly what each Cargo.lock lists, and every new package version is at least 24 hours old, with the checksum crates.io published (cargo xtask check-lockfile-age)
         run: cargo xtask check-lockfile-age
 
   verify:
@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The full history: `cargo xtask check-lockfile-age` compares Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
+          # The full history: `cargo xtask check-lockfile-age` compares each Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)

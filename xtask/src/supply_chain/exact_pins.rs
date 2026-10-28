@@ -5,7 +5,7 @@
 //! 1. Every entry of `[workspace.dependencies]` in the workspace's root `Cargo.toml`, as written: a crates.io dependency has an exact `=x.y.z` version requirement (Cargo reads a plain `"1.2.3"` as "1.2.3 or any later 1.x"), a path dependency points to a workspace member, and a Git dependency names a fixed `rev` or `tag` (never a branch). An entry may not name another registry.
 //! 2. Every dependency of every workspace member, as Cargo resolves the manifests (`cargo metadata`): the same rules, also for a dependency that a member declares itself instead of inheriting it with `name.workspace = true`.
 //!
-//! Both views are checked in every workspace of the repository (`workspace.rs`): the main workspace at the root, and each secondary workspace below it, such as bayan-core's `fuzz/`. A secondary workspace's path dependencies may also point to members of the main workspace, whose own dependencies are checked with the main workspace; the main workspace's may not point outside it.
+//! Both views are checked in every workspace of the repository (`workspace.rs`): the main workspace at the root, and each secondary workspace below it, such as bayan-core's `fuzz/`. A secondary workspace's path dependencies may also point to members of the main workspace, whose own dependencies are checked with the main workspace; the main workspace's may not point outside it. The check also fails when Git tracks a `Cargo.toml` that belongs to none of these workspaces, which Cargo could build without a committed lockfile (`workspace::check_manifests`).
 //!
 //! Exact pins make the versions in `Cargo.lock` the only ones that can be built, so `cargo update` cannot move a dependency without a reviewed change to the manifests.
 
@@ -17,7 +17,7 @@ use super::json::{self, Value};
 use super::manifest::{self, Dependency};
 use super::workspace::{self, Members, Workspace};
 
-/// Runs the check for every workspace of the repository at `root`, reporting what it checked through `report`.
+/// Runs the check for every workspace of the repository at `root`, and checks that every `Cargo.toml` that Git tracks belongs to one of them (`workspace::check_manifests`), reporting what it checked through `report`.
 pub fn check(root: &Path, report: &mut dyn FnMut(&str)) -> Result<(), String> {
     let main = Workspace::main(root);
     let secondary = workspace::secondary(root)?;
@@ -32,6 +32,7 @@ pub fn check(root: &Path, report: &mut dyn FnMut(&str)) -> Result<(), String> {
         },
         report,
     )?;
+    let mut secondary_members = Vec::new();
     for workspace in &secondary {
         let metadata = metadata(workspace)?;
         let members = Members::from_metadata(&metadata)?;
@@ -44,14 +45,25 @@ pub fn check(root: &Path, report: &mut dyn FnMut(&str)) -> Result<(), String> {
             },
             report,
         )?);
+        secondary_members.push(members);
     }
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
+    let mut failures = Vec::new();
+    if !problems.is_empty() {
+        failures.push(format!(
             "dependencies must be pinned exactly (ADR-0017 rule 5):\n  - {}\nDeclare each third-party dependency once in [workspace.dependencies] of the workspace's root Cargo.toml with an exact version, such as `name = \"=1.2.3\"`, and use it in a crate with `name.workspace = true`. A path dependency may point only to a member of the crate's own workspace or, from a secondary workspace (a folder below the root with its own Cargo.lock), to a member of the main workspace.",
             problems.join("\n  - ")
-        ))
+        ));
+    }
+    let members: Vec<&Members> = std::iter::once(&main_members)
+        .chain(&secondary_members)
+        .collect();
+    if let Err(problem) = workspace::check_manifests(root, &secondary, &members, report) {
+        failures.push(problem);
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
     }
 }
 
