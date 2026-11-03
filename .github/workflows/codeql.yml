@@ -1,6 +1,7 @@
-# Scans this repository with CodeQL, GitHub's static analysis, on every pull request, in the merge queue, on pushes to main and weekly, and uploads the results to GitHub code scanning (work package X-002). Alerts appear under Security → Code scanning, and a pull request shows the ones it would add.
+# Scans this repository with CodeQL, GitHub's static analysis, on every pull request, in the merge queue, on pushes to main and weekly, and uploads the results to GitHub code scanning (work packages X-002 and X-004). Alerts appear under Security → Code scanning, and a pull request shows the ones it would add.
 # Languages: GitHub Actions (the workflows), Python (the checks in .github/) and Rust (the server's workspace). The MLS spike (spikes/mls), a time-boxed experiment with a workspace and Cargo.lock of its own, is not scanned; the supply-chain checks below cover its Cargo.lock too.
-# None of these languages needs a build, but CodeQL's Rust extractor runs `cargo check` on the workspace to learn what build scripts and procedural macros produce, which runs code of the dependencies. The Rust job therefore first runs the same supply-chain checks as ci.yml's first job, so that no dependency they would reject runs here either. With CodeQL 2.27.2 that `cargo check` stops at once: the extractor installs and uses its own Rust version (1.98.1, with rustup), older than the workspace's rust-version (1.99), so CodeQL reads macros without expanding them.
+# None of these languages needs a build, but CodeQL's Rust extractor runs `cargo check` on the workspace to learn what build scripts and procedural macros produce, which runs code of the dependencies. The Rust analysis job therefore holds no write permission, like every analysis job here, and first runs the same supply-chain checks as ci.yml's first job, so that no dependency they would reject runs here either. With CodeQL 2.27.2 that `cargo check` stops at once: the extractor installs and uses its own Rust version (1.98.1, with rustup), older than the workspace's rust-version (1.99), so CodeQL reads macros without expanding them.
+# Each language has two jobs, so that no job that runs CodeQL, or code of this repository, of its tools or of its dependencies, holds a token that can write (X-004; AGENTS.md, workflow conventions). "CodeQL analysis (<language>)" analyses with read permissions only and keeps its results, one SARIF file, as a workflow artifact for a day. "CodeQL (<language>)", the check that main's ruleset requires, holds security-events: write and, after a first step that fails unless its analysis succeeded, runs only GitHub's own actions: it checks out the repository without credentials, downloads that file and uploads it to code scanning. It runs even when its analysis failed, so that the check fails instead of being skipped, which GitHub would count as passed. The upload jobs keep the ids of the jobs that analysed and uploaded before X-004 (analyze for the matrix), because code scanning tells its configurations apart by the workflow, the job id, the matrix and the category: with new ids, it would see new configurations, and the old ones would stay behind on main with their alerts.
 # CodeQL's engine, the CodeQL bundle, is downloaded by this workflow and checked against the SHA-256 that its release publishes, then handed to the CodeQL action, which would otherwise download it without checking a hash. Keep CODEQL_VERSION equal to the bundle that the pinned github/codeql-action names in its src/defaults.json (version 4.38.3 names 2.27.2), and update both together in the monthly dependency session, in all five BayanDocs repositories.
 # Workflow conventions (AGENTS.md): GitHub's own actions only, pinned to full commit SHAs with the version in a comment; per-job permissions; no credentials kept after checkout; timeouts; the pull_request and merge_group triggers (never pull_request_target).
 name: CodeQL
@@ -14,6 +15,11 @@ on:
   schedule:
     - cron: "23 6 * * 2"
   workflow_dispatch:
+    inputs:
+      test:
+        description: TEST ONLY (X-004 test branch) - which failures to inject
+        type: string
+        default: none
 
 permissions: {}
 
@@ -28,8 +34,8 @@ env:
   CODEQL_BUNDLE_SHA256: f24406b1557c506133db1f972758ee64f14eb3587a53367a1bd737f24495ea97
 
 jobs:
-  analyze:
-    name: CodeQL (${{ matrix.language }})
+  analysis:
+    name: CodeQL analysis (${{ matrix.language }})
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +44,11 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read # check out the repository
-      security-events: write # upload the results to code scanning
+      security-events: read # CodeQL reads its feature flags and sends its status reports through code scanning's API; without this it would analyse with other defaults than the ones GitHub sets
+    # One output per language, set by the last step: the result of a matrix job covers all its languages, so each upload job reads its own language's output instead.
+    outputs:
+      actions: ${{ steps.succeeded.outputs.actions }}
+      python: ${{ steps.succeeded.outputs.python }}
     defaults:
       run:
         shell: bash
@@ -62,18 +72,83 @@ jobs:
           build-mode: none
           tools: ${{ runner.temp }}/codeql-bundle-linux64.tar.zst
 
+      # Instead of uploading, the analysis writes the results as CodeQL would upload them (post-processed: matched to the pull request's changes, fingerprinted and given their category) to codeql-sarif/upload.sarif. It does not upload the CodeQL database either, which CodeQL does on main and which needs the write permission too.
       - name: Analyze
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: /language:${{ matrix.language }}
+          upload: never
+          post-processed-sarif-path: ${{ runner.temp }}/codeql-sarif
+          upload-database: false
 
-  rust:
-    name: CodeQL (rust)
+      # Only the SARIF file, kept for a day. Like every artifact of a public repository, anyone signed in to GitHub can download it; everything it is computed from (the code, the queries and the pinned bundle) is public too.
+      - name: Keep the results for the upload job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: ${{ runner.temp }}/codeql-sarif/upload.sarif
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Record that this analysis succeeded
+        id: succeeded
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: echo "$LANGUAGE=true" >> "$GITHUB_OUTPUT"
+
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    needs: analysis
+    # Also when an analysis failed: the first step then fails, so that the required check fails instead of being skipped.
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the repository, which the upload uses to match the results to its files
+      security-events: write # upload the results to code scanning
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Stop unless the analysis of this language succeeded
+        env:
+          LANGUAGE: ${{ matrix.language }}
+          SUCCEEDED: ${{ needs.analysis.outputs[matrix.language] }}
+        run: |
+          if [ "$SUCCEEDED" != true ]; then
+            echo "::error::The job \"CodeQL analysis ($LANGUAGE)\" did not succeed, so there are no results to upload."
+            exit 1
+          fi
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: ${{ runner.temp }}/codeql-sarif
+
+      # Exactly one file: with several, upload-sarif would download the CodeQL bundle, without checking its hash, and run it to merge them.
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: ${{ runner.temp }}/codeql-sarif/upload.sarif
+          category: /language:${{ matrix.language }}
+
+  rust-analysis:
+    name: CodeQL analysis (rust)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read # check out the repository
-      security-events: write # upload the results to code scanning
+      security-events: read # CodeQL reads its feature flags and sends its status reports through code scanning's API; without this it would analyse with other defaults than the ones GitHub sets
     defaults:
       run:
         shell: bash
@@ -86,6 +161,10 @@ jobs:
           # The full history: `cargo xtask check-lockfile-age` compares each Cargo.lock with the merge base of the pull request and finds the commit that added each new package version.
           fetch-depth: 0
           persist-credentials: false
+
+      - name: "TEST ONLY: fail the Rust analysis (r1, attempt 1)"
+        if: inputs.test == 'r1' && github.run_attempt == '1'
+        run: exit 1
 
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
@@ -113,7 +192,68 @@ jobs:
             paths-ignore:
               - spikes/mls
 
+      # As in the analysis job above: the results go to a file for the upload job, and the database is not uploaded.
       - name: Analyze
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
+          category: /language:rust
+          upload: never
+          post-processed-sarif-path: ${{ runner.temp }}/codeql-sarif
+          upload-database: false
+
+      - name: Keep the results for the upload job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-rust
+          path: ${{ runner.temp }}/codeql-sarif/upload.sarif
+          if-no-files-found: error
+          retention-days: 1
+
+  rust:
+    name: CodeQL (rust)
+    needs: rust-analysis
+    # Also when the analysis failed: the first step then fails, so that the required check fails instead of being skipped.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the repository, which the upload uses to match the results to its files
+      security-events: write # upload the results to code scanning
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Stop unless the analysis succeeded
+        env:
+          RESULT: ${{ needs.rust-analysis.result }}
+        run: |
+          if [ "$RESULT" != success ]; then
+            echo "::error::The job \"CodeQL analysis (rust)\" did not succeed (its result is $RESULT), so there are no results to upload."
+            exit 1
+          fi
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeql-sarif-rust
+          path: ${{ runner.temp }}/codeql-sarif
+
+      - name: "TEST ONLY: show what the artifact holds"
+        run: |
+          ls -la "$RUNNER_TEMP/codeql-sarif"
+          jq '{runs: (.runs | length), automation: [.runs[].automationDetails], tool: [.runs[].tool.driver.name], results: [.runs[].results | length]}' "$RUNNER_TEMP/codeql-sarif/upload.sarif"
+
+      - name: "TEST ONLY: remove the Rust SARIF file before the upload (r1, attempt 2)"
+        if: inputs.test == 'r1' && github.run_attempt == '2'
+        run: rm "$RUNNER_TEMP/codeql-sarif/upload.sarif"
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: ${{ runner.temp }}/codeql-sarif/upload.sarif
           category: /language:rust
