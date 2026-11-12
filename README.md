@@ -46,7 +46,7 @@ Builds never need a database: query metadata is committed in `crates/bayan-db-*/
 - Server decision: [ADR-0015](https://github.com/BayanDocs/docs/blob/HEAD/adr/0015-server-architecture.md); encryption and identity: [ADR-0016](https://github.com/BayanDocs/docs/blob/HEAD/adr/0016-e2ee-and-identity.md); [threat model](https://github.com/BayanDocs/docs/blob/HEAD/specs/threat-model.md)
 - Work packages: [docs/workpackages](https://github.com/BayanDocs/docs/tree/HEAD/workpackages)
 
-Contributors and agents: start with [AGENTS.md](AGENTS.md).
+Contributors and agents: start with [AGENTS.md](AGENTS.md). The developer guide's page [Developing bayan-server](https://github.com/BayanDocs/docs/blob/HEAD/developer/bayan-server.md) shows how to set up a development machine and run the verification gate, and how this repository fits with the others.
 
 ## License
 
