@@ -10,12 +10,12 @@ members = ["bayan-mls-spike", "bayan-mls-rs-check"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.100"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/BayanDocs/bayan-server"
 publish = false
 
-# ADR-0017: direct dependencies are pinned exactly (`=x.y.z`), every version was at least 24 hours old when pinned, and each one is justified in the pull request that added it. This lockfile was resolved with `cargo +nightly-2026-10-02`, whose Cargo enforces the minimum publish age.
+# ADR-0017: direct dependencies are pinned exactly (`=x.y.z`), every version was at least 24 hours old when pinned, and each one is justified in the pull request that added it. This lockfile is resolved with the pinned toolchain's Cargo (Rust 1.100), which enforces the minimum publish age (`global-min-publish-age` in the root `.cargo/config.toml`).
 [workspace.dependencies]
 # OpenMLS (ADR-0016) with its RustCrypto provider, its basic credentials and its trait crate: pure Rust; the provider uses RustCrypto and hpke-rs.
 openmls = "=0.9.0"

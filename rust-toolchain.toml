@@ -1,6 +1,6 @@
-# Pinned Rust toolchain (ADR-0006, ADR-0017). Rust 1.99.0 was released on 2026-10-01; keep this equal to bayan-core and to RUST_STABLE in docs/scripts/cloud-environment-setup.sh. Changed only in the monthly dependency session.
+# Pinned Rust toolchain (ADR-0006, ADR-0017). Rust 1.100.0 was released on 2026-11-12; keep this equal to bayan-core and to RUST_STABLE in docs/scripts/cloud-environment-setup.sh. Changed only in the monthly dependency session.
 [toolchain]
-channel = "1.99.0"
+channel = "1.100.0"
 components = ["clippy", "rustfmt"]
 profile = "minimal"
 # The MLS spike (spikes/mls) also runs its tests compiled to WebAssembly.
