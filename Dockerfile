@@ -6,7 +6,7 @@
 # The builder image is pinned by digest and was at least 24 hours old when pinned (ADR-0017); it changes only in the monthly dependency session. The final image has no base image.
 # The builder's Rust version must equal rust-toolchain.toml.
 
-# rust:1.100.0-alpine3.23, pushed to Docker Hub 2026-11-12T22:46Z (Docker Hub's last_updated); pinned once 24 hours old.
+# rust:1.100.0-alpine3.23, created 2026-11-12T20:25Z and pushed to Docker Hub at 22:46Z; pinned once 24 hours old.
 FROM docker.io/library/rust:1.100.0-alpine3.23@sha256:23ee60d5346e4042efbc9f9120d736be4b5c7f29becf2ebea181160422ca8d30 AS builder
 WORKDIR /src
 # Alpine's Rust targets musl and links statically, so the binary needs no C library at run time. gcc and musl-dev in the image compile the bundled SQLite.
