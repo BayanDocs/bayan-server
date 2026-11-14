@@ -1,7 +1,7 @@
 # Cargo configuration shared by every build of this workspace.
 
 [registry]
-# ADR-0017: never resolve a crate version published less than 24 hours ago. Cargo enforces this natively from Rust 1.100 (2026-11-12); the pinned 1.99 toolchain ignores the key with a warning, so until the workspace moves to 1.100 resolution is done with a toolchain that enforces it, and CI checks lockfile ages (X-003).
+# ADR-0017: never resolve a crate version published less than 24 hours ago. Cargo enforces this natively from Rust 1.100 (2026-11-12), the pinned toolchain, but only when it resolves new versions; CI checks the age of every version a change adds to a lockfile (`cargo xtask check-lockfile-age`, X-003).
 global-min-publish-age = "1 day"
 
 [env]

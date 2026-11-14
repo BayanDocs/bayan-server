@@ -1,6 +1,6 @@
 //! Spike SRV-002, time-boxed fallback check (ADR-0016 Decision 1): do the flows the design needs work with mls-rs, the fallback library, natively and in WebAssembly?
 //!
-//! [`run_flows`] does with mls-rs 0.56 and its pure-Rust crypto provider (`mls-rs-crypto-rustcrypto`) what `bayan-mls-spike` does with OpenMLS: a group whose context carries a custom, required extension (the role roster's place), adding members, Welcomes processed with the ratchet tree fetched separately, updates of 100 B to 100 KB, a self-update, a removal, and a server that follows every commit in public framing with mls-rs's external client, seeing who committed and what. It does not port the role policy; REPORT.md says what porting it would take.
+//! [`run_flows`] does with mls-rs 0.57 and its pure-Rust crypto provider (`mls-rs-crypto-rustcrypto`) what `bayan-mls-spike` does with OpenMLS: a group whose context carries a custom, required extension (the role roster's place), adding members, Welcomes processed with the ratchet tree fetched separately, updates of 100 B to 100 KB, a self-update, a removal, and a server that follows every commit in public framing with mls-rs's external client, seeing who committed and what. It does not port the role policy; REPORT.md says what porting it would take.
 
 #![forbid(unsafe_code)]
 

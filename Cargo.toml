@@ -6,7 +6,7 @@ default-members = ["crates/bayan-server", "crates/bayan-db-sqlite", "crates/baya
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.100"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/BayanDocs/bayan-server"
 publish = false
@@ -17,15 +17,15 @@ bayan-db-postgres = { path = "crates/bayan-db-postgres" }
 bayan-db-sqlite = { path = "crates/bayan-db-sqlite" }
 axum = { version = "=0.8.9", default-features = false, features = ["matched-path"] }
 # hyper and hyper-util serve the connections directly (crates/bayan-server/src/http/serve.rs) so that every connection gets a timer and a header-read timeout, which `axum::serve` does not set up. Both were already in the build as dependencies of axum; HTTP/1 only.
-hyper = { version = "=1.11.1", default-features = false, features = ["http1", "server"] }
+hyper = { version = "=1.12.0", default-features = false, features = ["http1", "server"] }
 hyper-util = { version = "=0.1.21", default-features = false, features = ["http1", "server", "server-graceful", "service", "tokio"] }
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = "=1.0.154"
 # SQLite is bundled (compiled from C source by libsqlite3-sys). ADR-0006 §3 permits it because it only stores server-generated metadata through bound parameters; it never parses documents or client-supplied SQL. No TLS feature: every TLS backend sqlx offers needs C or assembly code (ring, aws-lc, OpenSSL), which needs a separate decision.
 sqlx = { version = "=0.9.0", default-features = false, features = ["macros", "migrate", "runtime-tokio"] }
 thiserror = "=2.0.21"
-tokio = { version = "=1.53.3", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
-toml = { version = "=1.1.6", default-features = false, features = ["parse", "serde", "std"] }
+tokio = { version = "=1.54.1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+toml = { version = "=1.2.1", default-features = false, features = ["parse", "serde", "std"] }
 tower-http = { version = "=0.7.1", default-features = false, features = ["fs", "limit", "timeout"] }
 tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
