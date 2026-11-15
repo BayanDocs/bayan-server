@@ -31,13 +31,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # Into a virtual environment outside the checkout, so that REUSE does not check its own files. Wheels only, except REUSE itself: version 6.2.0 has no wheel for this Python, so it is built from its hash-pinned source archive with the hash-pinned build backend installed first (no other download during the build).
+      # Into a virtual environment outside the checkout, so that REUSE does not check its own files. Wheels only, REUSE's own included (it publishes one since version 6.3.0), so no package code runs while it is installed.
       - name: Install REUSE (exact versions, SHA-256 hashes checked)
         run: |
           python3 -m venv "$RUNNER_TEMP/reuse"
-          pip=("$RUNNER_TEMP/reuse/bin/pip" install --no-input --disable-pip-version-check --require-hashes --only-binary :all:)
-          "${pip[@]}" --requirement .github/reuse/build-requirements.txt
-          "${pip[@]}" --no-build-isolation --no-binary reuse --requirement .github/reuse/requirements.txt
+          "$RUNNER_TEMP/reuse/bin/pip" install --no-input --disable-pip-version-check --require-hashes --only-binary :all: --requirement .github/reuse/requirements.txt
           "$RUNNER_TEMP/reuse/bin/reuse" --version | head -n 1
 
       - name: Every file has copyright and license information (reuse lint)

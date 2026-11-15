@@ -1,13 +1,13 @@
 # REUSE and its dependencies, for the REUSE workflow (.github/workflows/reuse.yml): exact versions with SHA-256 hashes (ADR-0017), the same pins as req_reuse in the BayanDocs cloud environment (docs/scripts/cloud-environment-setup.sh).
-# Generated with docs/scripts/python-tool-hashes.py 'reuse==6.2.0' 2026-10-03T00:00:00Z: wheels for CPython 3.11-3.14 on x86-64 Ubuntu 24.04, plus REUSE's own source archive, because REUSE 6.2.0 publishes no wheel for these Python versions (the workflow builds it with build-requirements.txt).
-# Publish dates: reuse 6.2.0 on 2025-10-27; the newest pin, markupsafe 3.0.4, on 2026-10-02. REUSE is a standalone CI tool that is never shipped, so python-debian's GPL-2.0-or-later is acceptable here (ADR-0017, amendment "what the license allowlist covers").
-# Changed only in the monthly dependency session, together with build-requirements.txt, in all five BayanDocs repositories.
+# Generated with docs/scripts/python-tool-hashes.py 'reuse==6.3.0' 2026-11-14T06:33:00Z: wheels for CPython 3.11-3.14 on x86-64 Ubuntu 24.04. Since version 6.3.0, REUSE publishes a wheel for every Python version, so every package here, REUSE included, is installed as a prebuilt wheel and nothing is built from source.
+# Publish dates: reuse 6.3.0 on 2026-10-30; the newest pin, click 8.5.1, on 2026-11-06. REUSE is a standalone CI tool that is never shipped, so python-debian's GPL-2.0-or-later is acceptable here (ADR-0017, amendment "what the license allowlist covers").
+# Changed only in the monthly dependency session, in all five BayanDocs repositories.
 attrs==26.1.0 \
     --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
 boolean-py==5.0 \
     --hash=sha256:ef28a70bd43115208441b53a045d1549e2f0ec6e3d08a9d142cbc41c1938e8d9
-click==8.5.0 \
-    --hash=sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360
+click==8.5.1 \
+    --hash=sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37
 jinja2==3.1.6 \
     --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
 license-expression==30.4.4 \
@@ -22,7 +22,7 @@ python-debian==1.1.1 \
     --hash=sha256:f98ae013e8e5310e49041cc3860a7105df73af73d4ff1d8afb474770d328a6ad
 python-magic==0.4.27 \
     --hash=sha256:c212960ad306f700aa0d01e5d7a325d20548ff97eb9920dcd29513174f0294d3
-reuse==6.2.0 \
-    --hash=sha256:4feae057a2334c9a513e6933cdb9be819d8b822f3b5b435a36138bd218897d23
-tomlkit==0.15.1 \
-    --hash=sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304
+reuse==6.3.0 \
+    --hash=sha256:be6b598aa6d5cdf44af0da265572a72f0adcd30033857af874fd8607188259c1
+tomlkit==0.15.2 \
+    --hash=sha256:05562412163a3037b94497385fb7f9204c637bc605af7a48199e41cf2272f437
