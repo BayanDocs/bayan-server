@@ -6,8 +6,8 @@
 # cargo-deny and grype go into $BAYAN_TOOLS_BIN (default ~/.local/bin). The tools that run the MLS spike's tests in WebAssembly (spikes/mls) go into their own folders under $BAYAN_TOOLS_DIR (default ~/.local/share/bayandocs/server-tools), not on PATH, so they never replace a Node.js, browser or wasm-bindgen you use elsewhere; `cargo xtask mls-spike-wasm` finds them there.
 #
 # Pins change only in the monthly dependency session; keep cargo-deny, grype and Node.js equal to docs/scripts/cloud-environment-setup.sh, Node.js and the Chromium headless shell equal to bayan-web's scripts/dev-setup.sh, and wasm-bindgen equal to the wasm-bindgen crate in spikes/mls/Cargo.lock (the test runner refuses other versions). Every version was at least 24 hours old when pinned.
-#   cargo-deny 0.20.2               released 2026-07-09  dependency policy checks in `cargo xtask verify`
-#   grype 0.120.0                   released 2026-10-02  container image vulnerability scanner (CI)
+#   cargo-deny 0.21.0               released 2026-11-16  dependency policy checks in `cargo xtask verify`
+#   grype 0.122.0                   released 2026-11-16  container image vulnerability scanner (CI)
 #   wasm-bindgen 0.2.130            released 2026-10-30  wasm-bindgen and wasm-bindgen-test-runner, for the MLS spike's WebAssembly tests and size measurement
 #   node 24.22.3                    released 2026-11-10  Node.js (only its `node` program), runs the WebAssembly tests in Node.js; hash from nodejs.org's signed SHASUMS256.txt, as in bayan-web
 #   chromedriver 153.0.8010.12      released 2026-08-25  drives the browser for the WebAssembly tests in Chromium
@@ -22,8 +22,8 @@ tools_dir="${BAYAN_TOOLS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bayandocs/ser
 # name | version | URL | SHA-256 of the archive | what to install | command (relative to the install location) that prints the version
 # What to install: "bin:<path>" copies that file from the archive into $bin_dir; "files:<path>,<path>,..." copies those files into $tools_dir/<name>/; "tree:<directory>" installs that directory of the archive as $tools_dir/<name>/.
 tools=(
-  "cargo-deny|0.20.2|https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz|9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f|bin:cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny|cargo-deny --version"
-  "grype|0.120.0|https://github.com/anchore/grype/releases/download/v0.120.0/grype_0.120.0_linux_amd64.tar.gz|a5a1218dce63acdac152a6b3b5bb366e7267e36f4069848cf455543b3fa5700e|bin:grype|grype --version"
+  "cargo-deny|0.21.0|https://github.com/EmbarkStudios/cargo-deny/releases/download/0.21.0/cargo-deny-0.21.0-x86_64-unknown-linux-musl.tar.gz|a2170b854ff697e79e39c4c538981c9c1bdd803addbae6719a4cb66b4585a903|bin:cargo-deny-0.21.0-x86_64-unknown-linux-musl/cargo-deny|cargo-deny --version"
+  "grype|0.122.0|https://github.com/anchore/grype/releases/download/v0.122.0/grype_0.122.0_linux_amd64.tar.gz|e697e6f7224637df87e267e4318cc027feae99a8e1b80280241d32b9ee5d4920|bin:grype|grype --version"
   "wasm-bindgen|0.2.130|https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.130/wasm-bindgen-0.2.130-x86_64-unknown-linux-musl.tar.gz|9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f|files:wasm-bindgen-0.2.130-x86_64-unknown-linux-musl/wasm-bindgen,wasm-bindgen-0.2.130-x86_64-unknown-linux-musl/wasm-bindgen-test-runner|wasm-bindgen --version"
   "node|24.22.3|https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz|4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb|files:node-v24.22.3-linux-x64/bin/node|node --version"
   "chromedriver|153.0.8010.12|https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chromedriver-linux64.zip|b7d5f7c120f7827f3538b416e08b82418eb702f18b680c183f0411c8d7f2df69|files:chromedriver-linux64/chromedriver|chromedriver --version"
