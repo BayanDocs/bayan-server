@@ -80,7 +80,7 @@ docker inspect --format '{{.State.Health.Status}}' bayan-server   # healthy
 
 - `docker stop bayan-server` sends `SIGTERM`; the server stops accepting connections, closes idle ones, lets requests in progress finish (up to `BAYAN_SHUTDOWN_GRACE_SECS`, 5 seconds by default), closes the database (at most 2 more seconds) and exits with status 0. That fits within Docker's default stop timeout of 10 seconds. If you raise the grace period, raise Docker's timeout to match (`docker stop --time`, `docker run --stop-timeout`, or `stop_grace_period` in Compose), or Docker kills the server before it has stopped cleanly.
 - To upgrade, start the new image with the same volume and settings. Database migrations run automatically at startup.
-- With SQLite, back up the `/data` volume while the server is stopped (online backup tooling comes with a later work package).
+- With SQLite, back up the `/data` volume while the server is stopped (online backup tooling comes with a later work package). Restore it while the server is stopped too, only as a whole folder and only from a backup you trust. Never put a database file next to a `-wal` file from another copy: SQLite writes its latest changes first to that second file, the write-ahead log (`bayan.sqlite3-wal` beside the database `bayan.sqlite3`), and reads it whenever it opens the database, so a log that belongs to another copy can damage the database, and a deliberately crafted one could exploit a bug in SQLite.
 
 ## Local development
 
