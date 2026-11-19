@@ -13,7 +13,7 @@
 #   chromedriver 153.0.8010.12      released 2026-08-25  drives the browser for the WebAssembly tests in Chromium
 #   chrome-headless-shell 153.0.8010.12  released 2026-08-25  Chromium's headless shell (Chrome for Testing), the same build bayan-web tests with
 # The two Chrome for Testing archives were hashed from Google's storage.googleapis.com and confirmed identical on npmmirror (cdn.npmmirror.com/binaries/chrome-for-testing/…), a mirror run by a different organization, on 2026-10-07.
-# Also needed, from the system: curl, sha256sum, tar with xz support, unzip; python3 and psql for `cargo xtask sqlx-prepare`; Docker for the container build and smoke test; and for the headless shell the libraries Chromium needs (present on GitHub's Ubuntu runners; on a bare Ubuntu install, bayan-web's scripts/dev-setup.sh lists them).
+# Also needed, from the system: curl, sha256sum, tar with xz support, unzip; python3 and psql for `cargo xtask sqlx-prepare`; Docker for the container build and smoke test; and for chromedriver and the headless shell the libraries that Chromium uses (present on GitHub's Ubuntu runners; on Ubuntu 24.04, browser_packages below lists the packages that contain them, and when either program cannot start, this script says why and prints the command that installs them).
 set -euo pipefail
 
 bin_dir="${BAYAN_TOOLS_BIN:-$HOME/.local/bin}"
@@ -28,6 +28,12 @@ tools=(
   "node|24.22.3|https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz|4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb|files:node-v24.22.3-linux-x64/bin/node|node --version"
   "chromedriver|153.0.8010.12|https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chromedriver-linux64.zip|b7d5f7c120f7827f3538b416e08b82418eb702f18b680c183f0411c8d7f2df69|files:chromedriver-linux64/chromedriver|chromedriver --version"
   "chrome-headless-shell|153.0.8010.12|https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chrome-headless-shell-linux64.zip|a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d|tree:chrome-headless-shell-linux64|chrome-headless-shell --version"
+)
+
+# The Ubuntu 24.04 packages that contain the shared libraries chromedriver and the headless shell link and a bare Ubuntu 24.04 installation lacks; apt adds what those libraries need in turn. Without them neither program starts, so this script cannot check their versions: it then says why and prints the command that installs these packages, but never runs apt or sudo itself. Checked on 2026-11-19 in a bare Ubuntu 24.04 container, where with only these packages added both programs started and the MLS spike's tests passed in Chromium; check the list again with ldd when the two programs move to a new version.
+browser_packages=(
+  libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libdbus-1-3 libexpat1 libgbm1 libglib2.0-0t64 libnspr4
+  libnss3 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2
 )
 
 if [ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]; then
@@ -45,6 +51,27 @@ reports_version() {
   local version="$1"
   shift
   "$@" 2>/dev/null | grep -qE "(^| |v)${version//./\\.}( |$)"
+}
+
+# Says why chromedriver or the headless shell (`name`; `command` is the program and its arguments) did not report its version: what the program printed, the shared libraries it needs that ldd cannot find, and the command that installs the Ubuntu packages in browser_packages. ldd may run the program to list its libraries (see ldd(1)), which adds no risk: the program, from an archive whose SHA-256 was checked, has just been run anyway.
+explain_browser_failure() {
+  local name="$1"
+  local -a printed missing
+  shift
+  mapfile -t printed < <("$@" 2>&1 | head -n 20)
+  if [ "${#printed[@]}" -gt 0 ]; then
+    echo "dev-setup: $name printed:" >&2
+    printf '  %s\n' "${printed[@]}" >&2
+  fi
+  if command -v ldd >/dev/null; then
+    mapfile -t missing < <(ldd "$1" 2>/dev/null | awk '/=> not found$/ { print $1 }')
+    if [ "${#missing[@]}" -gt 0 ]; then
+      echo "dev-setup: $name needs these shared libraries, which ldd cannot find: ${missing[*]}" >&2
+    fi
+  fi
+  echo "dev-setup: chromedriver and the headless shell need the shared libraries that Chromium uses. On Ubuntu 24.04, browser_packages in scripts/dev-setup.sh lists the packages that contain them; install them with" >&2
+  echo "  sudo apt install ${browser_packages[*]}" >&2
+  echo "dev-setup: then run this script again. On another system, install the packages that contain the missing libraries." >&2
 }
 
 mkdir -p "$bin_dir" "$tools_dir"
@@ -103,7 +130,11 @@ for entry in "${tools[@]}"; do
         mkdir "$tmp/new"
         for member in "${members[@]}"; do install -m 0755 "$tmp/x/$member" "$tmp/new/$(basename "$member")"; done
       fi
-      reports_version "$version" "$tmp/new/${version_args[0]}" "${version_args[@]:1}" || { echo "dev-setup: $name does not report version $version" >&2; exit 1; }
+      reports_version "$version" "$tmp/new/${version_args[0]}" "${version_args[@]:1}" || {
+        echo "dev-setup: $name does not report version $version" >&2
+        case "$name" in chromedriver | chrome-headless-shell) explain_browser_failure "$name" "$tmp/new/${version_args[0]}" "${version_args[@]:1}" ;; esac
+        exit 1
+      }
       echo "$sha256" >"$tmp/new/.bayandocs-sha256"
       rm -rf -- "$target"
       mv "$tmp/new" "$target"
