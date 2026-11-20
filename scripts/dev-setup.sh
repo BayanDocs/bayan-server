@@ -10,9 +10,9 @@
 #   grype 0.122.0                   released 2026-11-16  container image vulnerability scanner (CI)
 #   wasm-bindgen 0.2.130            released 2026-10-30  wasm-bindgen and wasm-bindgen-test-runner, for the MLS spike's WebAssembly tests and size measurement
 #   node 24.22.3                    released 2026-11-10  Node.js (only its `node` program), runs the WebAssembly tests in Node.js; hash from nodejs.org's signed SHASUMS256.txt, as in bayan-web
-#   chromedriver 153.0.8010.12      released 2026-08-25  drives the browser for the WebAssembly tests in Chromium
-#   chrome-headless-shell 153.0.8010.12  released 2026-08-25  Chromium's headless shell (Chrome for Testing), the same build bayan-web tests with
-# The two Chrome for Testing archives were hashed from Google's storage.googleapis.com and confirmed identical on npmmirror (cdn.npmmirror.com/binaries/chrome-for-testing/…), a mirror run by a different organization, on 2026-10-07.
+#   chromedriver 159.0.8154.6       released 2026-11-11  drives the browser for the WebAssembly tests in Chromium
+#   chrome-headless-shell 159.0.8154.6  released 2026-11-11  Chromium's headless shell (Chrome for Testing), the same build bayan-web tests with
+# The two Chrome for Testing archives were hashed from Google's storage.googleapis.com and confirmed identical on npmmirror (cdn.npmmirror.com/binaries/chrome-for-testing/…), a mirror run by a different organization, on 2026-11-20.
 # Also needed, from the system: curl, sha256sum, tar with xz support, unzip; python3 and psql for `cargo xtask sqlx-prepare`; Docker for the container build and smoke test; and for chromedriver and the headless shell the libraries that Chromium uses (present on GitHub's Ubuntu runners; on Ubuntu 24.04, browser_packages below lists the packages that contain them, and when either program cannot start, this script says why and prints the command that installs them).
 set -euo pipefail
 
@@ -26,8 +26,8 @@ tools=(
   "grype|0.122.0|https://github.com/anchore/grype/releases/download/v0.122.0/grype_0.122.0_linux_amd64.tar.gz|e697e6f7224637df87e267e4318cc027feae99a8e1b80280241d32b9ee5d4920|bin:grype|grype --version"
   "wasm-bindgen|0.2.130|https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.130/wasm-bindgen-0.2.130-x86_64-unknown-linux-musl.tar.gz|9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f|files:wasm-bindgen-0.2.130-x86_64-unknown-linux-musl/wasm-bindgen,wasm-bindgen-0.2.130-x86_64-unknown-linux-musl/wasm-bindgen-test-runner|wasm-bindgen --version"
   "node|24.22.3|https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz|4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb|files:node-v24.22.3-linux-x64/bin/node|node --version"
-  "chromedriver|153.0.8010.12|https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chromedriver-linux64.zip|b7d5f7c120f7827f3538b416e08b82418eb702f18b680c183f0411c8d7f2df69|files:chromedriver-linux64/chromedriver|chromedriver --version"
-  "chrome-headless-shell|153.0.8010.12|https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/chrome-headless-shell-linux64.zip|a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d|tree:chrome-headless-shell-linux64|chrome-headless-shell --version"
+  "chromedriver|159.0.8154.6|https://storage.googleapis.com/chrome-for-testing-public/159.0.8154.6/linux64/chromedriver-linux64.zip|7c6e8e13d6ec61c2774db650e4f15dfed0c31ed98fa56bd89af3ad0b0820bc44|files:chromedriver-linux64/chromedriver|chromedriver --version"
+  "chrome-headless-shell|159.0.8154.6|https://storage.googleapis.com/chrome-for-testing-public/159.0.8154.6/linux64/chrome-headless-shell-linux64.zip|77a6442fd3c8acd3bef9e1067fc26f5ef464277d22f0e8cb58dc3e4077a3e458|tree:chrome-headless-shell-linux64|chrome-headless-shell --version"
 )
 
 # The Ubuntu 24.04 packages that contain the shared libraries chromedriver and the headless shell link and a bare Ubuntu 24.04 installation lacks; apt adds what those libraries need in turn. Without them neither program starts, so this script cannot check their versions: it then says why and prints the command that installs these packages, but never runs apt or sudo itself. Checked on 2026-11-19 in a bare Ubuntu 24.04 container, where with only these packages added both programs started and the MLS spike's tests passed in Chromium; check the list again with ldd when the two programs move to a new version.
