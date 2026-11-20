@@ -30,7 +30,7 @@ tools=(
   "chrome-headless-shell|159.0.8154.6|https://storage.googleapis.com/chrome-for-testing-public/159.0.8154.6/linux64/chrome-headless-shell-linux64.zip|77a6442fd3c8acd3bef9e1067fc26f5ef464277d22f0e8cb58dc3e4077a3e458|tree:chrome-headless-shell-linux64|chrome-headless-shell --version"
 )
 
-# The Ubuntu 24.04 packages that contain the shared libraries chromedriver and the headless shell link and a bare Ubuntu 24.04 installation lacks; apt adds what those libraries need in turn. Without them neither program starts, so this script cannot check their versions: it then says why and prints the command that installs these packages, but never runs apt or sudo itself. Checked on 2026-11-19 in a bare Ubuntu 24.04 container, where with only these packages added both programs started and the MLS spike's tests passed in Chromium; check the list again with ldd when the two programs move to a new version.
+# The Ubuntu 24.04 packages that contain the shared libraries chromedriver and the headless shell link and a bare Ubuntu 24.04 installation lacks; apt adds what those libraries need in turn. Without them neither program starts, so this script cannot check their versions: it then says why and prints the command that installs these packages, but never runs apt or sudo itself. Checked on 2026-11-20 in a bare Ubuntu 24.04 container, where with only these packages added both programs started and the MLS spike's tests passed in Chromium; check the list again with ldd when the two programs move to a new version.
 browser_packages=(
   libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libdbus-1-3 libexpat1 libgbm1 libglib2.0-0t64 libnspr4
   libnss3 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2
