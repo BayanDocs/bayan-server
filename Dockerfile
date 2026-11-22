@@ -1,7 +1,8 @@
 # Container image of the BayanDocs server (ADR-0015): one static binary in an otherwise empty image, running as a non-root user with a read-only root filesystem and a writable /data volume.
 #
 # Build:  docker build --build-arg BAYAN_BUILD_COMMIT="$(git rev-parse HEAD)" -t bayan-server .
-# Run:    docker run --read-only -v bayan-data:/data -p 8080:8080 bayan-server
+# Run:    docker run --read-only -v bayan-data:/data -p 127.0.0.1:8080:8080 bayan-server
+#         (published on the loopback interface only: users reach the server through a reverse proxy that terminates HTTPS, see docs/deployment.md)
 #
 # The builder image is pinned by digest and was at least 24 hours old when pinned (ADR-0017); it changes only in the monthly dependency session. The final image has no base image.
 # The builder's Rust version must equal rust-toolchain.toml.
