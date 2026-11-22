@@ -12,7 +12,7 @@ The plan, decisions (ADRs), specifications and work packages live in the [BayanD
 4. Run the verification gate before every push. Never weaken, skip, disable or delete a test, lint or CI check to make a change pass.
 5. Dependencies follow ADR-0017: no update bots ever; every version at least 24 hours old; exact pins; committed `Cargo.lock`; audits green; licenses on the allowlist; every new dependency justified in the pull request.
 6. Treat every input as hostile; no telemetry; no secrets; never log document content, titles, file names, tokens or request bodies.
-7. Pull requests use the hand-off template in `docs/plan/06-agent-workflow.md`; Conventional Commits; DCO rules from `CONTRIBUTING.md` once enabled (agents never sign off themselves; the human submitter certifies, per ADR-0003).
+7. Pull requests use the hand-off template in `docs/plan/06-agent-workflow.md`; Conventional Commits; DCO rules from `CONTRIBUTING.md` once enabled (agents never sign off themselves; the human submitter certifies, per ADR-0003). The one exception is the orchestrator session, which adds the owner's sign-off on the owner's behalf when it merges reviewed work (ADR-0003, amendment of 2026-10-27).
 8. Clean room: never copy code under an incompatible license.
 9. Stop and ask, with options and a recommendation, when the brief is ambiguous, when you need a new decision, or when work touches cryptography, authentication, authorization, licensing or the owner's accounts. Never design cryptography yourself (ADR-0016 §12).
 10. Explain your work in plain language for the owner; text meant for the owner to copy is written as flowing paragraphs without hard line breaks.
