@@ -1,0 +1,70 @@
+# cargo-deny configuration (ADR-0017): advisories, licenses, banned crates and allowed sources. `cargo xtask verify` checks the server's workspace with the root deny.toml (`cargo deny --locked --all-features check`) and the MLS spike's workspace (spikes/mls) with spikes/mls/deny.toml, once per build target, on every pull request and every night. The two files hold the same policy, word for word, except for one advisory exception that only the spike's has (in [advisories]), and an xtask test (the_spike_policy_is_the_servers_plus_one_advisory_exception) keeps them so: make every other change in both. The rules cargo-deny cannot check (exact pins and the 24-hour minimum age of new package versions) are `cargo xtask check-exact-pins` and `cargo xtask check-lockfile-age` (work package X-003).
+
+[graph]
+all-features = true
+
+[advisories]
+# RustSec advisories: vulnerable and unmaintained crates, and yanked versions, fail the check. Any exception must be listed here with a reason and a review date.
+version = 2
+yanked = "deny"
+# Advisories that a crate is unmaintained or unsound count for every crate in the build, direct or not. For unmaintained crates that is cargo-deny's default; for unsound ones the default would count only the workspace's direct dependencies.
+unmaintained = "all"
+unsound = "all"
+# Exception accepted by the owner on 2026-10-27 (option 1 of the open question in BayanDocs/bayan-server#8), for an advisory whose fix cannot be reached yet: crypto-bigint 0.5.5 has a timing leak that is fixed only in crypto-bigint 0.7.9 and later, which only elliptic-curve 0.14 can use, and the newest releases of OpenMLS's RustCrypto crates (openmls_rust_crypto 0.6.0, with hpke-rs-rust-crypto 0.7.0, and openmls_basic_credential 0.6.0) still need elliptic-curve 0.13. mls-rs's provider moved to elliptic-curve 0.14 (and so to crypto-bigint 0.7) with mls-rs-crypto-rustcrypto 0.23.0, which the spike uses since November 2026's dependency session. The exception is written only in this file, spikes/mls/deny.toml, which only the spike's audit reads (moved here from the root deny.toml after the architecture review of 2026-11-20, L16): the server's own audit reads the root deny.toml, which has no exception, so it fails if crypto-bigint 0.5.5 ever reaches the server. Review date: every monthly dependency session (the docs repository's developer/dependency-update-runbook.md): the reason must still hold, and the entry goes as soon as OpenMLS's crates move to elliptic-curve 0.14 or the spike is retired. Re-checked on 2026-11-13: the reason still holds, and the server still does not depend on crypto-bigint.
+ignore = [
+  { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 reaches only the MLS spike (spikes/mls), through OpenMLS's RustCrypto crates (openmls_rust_crypto, openmls_basic_credential), which still need elliptic-curve 0.13; the spike is never built into the server and runs only tests and benchmarks with throwaway keys; the fix needs those crates on elliptic-curve 0.14; re-check in every monthly session, and remove once they move or the spike is retired" },
+]
+
+[licenses]
+version = 2
+# The allowlist from ADR-0017 §8. A dual-licensed crate qualifies if one option is on the list.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+confidence-threshold = 0.93
+# The allowlist is shared by every BayanDocs repository, so entries this workspace does not use yet are expected.
+unused-allowed-license = "allow"
+# This workspace's own crates are AGPL-3.0-or-later and unpublished; the allowlist applies to dependencies.
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+# ADR-0006: no C or C++ code beyond SQLite (bundled through libsqlite3-sys, used only for server metadata). `cc` may only be used by libsqlite3-sys; crates that bundle other native code are banned outright, so adding one fails the gate until an ADR amendment allows it.
+deny = [
+    { crate = "cc", wrappers = ["libsqlite3-sys"], reason = "C code is allowed only for SQLite (ADR-0006 §3)" },
+    { crate = "cmake", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "bindgen", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "openssl-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "native-tls", reason = "no native code beyond SQLite (ADR-0006)" },
+    # ADR-0028 chose rustls with aws-lc-rs for TLS, so ring stays banned (one crypto provider only).
+    { crate = "ring", reason = "not the chosen TLS crypto provider (ADR-0028)" },
+    # ADR-0028 allows AWS-LC as rustls's crypto provider. It stays banned until the work package that adds TLS (SRV-102) removes this line, adds aws-lc-sys to the `cc` wrappers above, and adds the webpki-roots license exception (ADR-0017 amendment 2026-10-04), with tests.
+    { crate = "aws-lc-sys", reason = "allowed only once TLS is added as ADR-0028 describes" },
+    { crate = "libz-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "zstd-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "bzip2-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+    { crate = "lzma-sys", reason = "no native code beyond SQLite (ADR-0006)" },
+]
+
+[sources]
+# Only crates.io; no Git or alternative registries without an explicit entry here (ADR-0017). A Git dependency needs its repository listed in `allow-git`, with a reason, and must name a fixed `tag` or `rev` (a commit), never a branch; `cargo xtask check-exact-pins` checks the same in the manifests. Cargo.lock records the exact commit either way. `cargo xtask check-lockfile-age`, which runs before anything is built, refuses a Git dependency until a work package teaches it to judge the commit's age.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+required-git-spec = "tag"

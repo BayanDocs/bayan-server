@@ -1,4 +1,4 @@
-# cargo-deny configuration (ADR-0017): advisories, licenses, banned crates and allowed sources. `cargo xtask verify` runs `cargo deny --locked --all-features check`, on every pull request and every night. The rules cargo-deny cannot check (exact pins and the 24-hour minimum age of new package versions) are `cargo xtask check-exact-pins` and `cargo xtask check-lockfile-age` (work package X-003).
+# cargo-deny configuration (ADR-0017): advisories, licenses, banned crates and allowed sources. `cargo xtask verify` checks the server's workspace with the root deny.toml (`cargo deny --locked --all-features check`) and the MLS spike's workspace (spikes/mls) with spikes/mls/deny.toml, once per build target, on every pull request and every night. The two files hold the same policy, word for word, except for one advisory exception that only the spike's has (in [advisories]), and an xtask test (the_spike_policy_is_the_servers_plus_one_advisory_exception) keeps them so: make every other change in both. The rules cargo-deny cannot check (exact pins and the 24-hour minimum age of new package versions) are `cargo xtask check-exact-pins` and `cargo xtask check-lockfile-age` (work package X-003).
 
 [graph]
 all-features = true
@@ -10,10 +10,6 @@ yanked = "deny"
 # Advisories that a crate is unmaintained or unsound count for every crate in the build, direct or not. For unmaintained crates that is cargo-deny's default; for unsound ones the default would count only the workspace's direct dependencies.
 unmaintained = "all"
 unsound = "all"
-# Exception accepted by the owner on 2026-10-27 (option 1 of the open question in BayanDocs/bayan-server#8), for an advisory whose fix cannot be reached yet: crypto-bigint 0.5.5 has a timing leak that is fixed only in crypto-bigint 0.7.9 and later, which only elliptic-curve 0.14 can use, and the newest releases of OpenMLS's RustCrypto crates (openmls_rust_crypto 0.6.0, with hpke-rs-rust-crypto 0.7.0, and openmls_basic_credential 0.6.0) still need elliptic-curve 0.13. mls-rs's provider moved to elliptic-curve 0.14 (and so to crypto-bigint 0.7) with mls-rs-crypto-rustcrypto 0.23.0, which the spike uses since November 2026's dependency session. This file is shared by the server and the spike, so the exception also covers the server, which does not depend on crypto-bigint at all today (`cargo tree -i crypto-bigint` finds nothing); a change that brings crypto-bigint into the server must remove the exception first. Review date: every monthly dependency session (the docs repository's developer/dependency-update-runbook.md): the reason must still hold, and the entry goes as soon as OpenMLS's crates move to elliptic-curve 0.14 or the spike is retired. Re-checked on 2026-11-13: the reason still holds, and the server still does not depend on crypto-bigint.
-ignore = [
-  { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 reaches only the MLS spike (spikes/mls), through OpenMLS's RustCrypto crates (openmls_rust_crypto, openmls_basic_credential), which still need elliptic-curve 0.13; the spike is never built into the server and runs only tests and benchmarks with throwaway keys; the fix needs those crates on elliptic-curve 0.14; re-check in every monthly session, and remove once they move or the spike is retired" },
-]
 
 [licenses]
 version = 2

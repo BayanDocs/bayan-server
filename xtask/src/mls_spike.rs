@@ -1,6 +1,6 @@
 //! Commands for the MLS spike of work package SRV-002 (`spikes/mls`, a Cargo workspace of its own; see its REPORT.md).
 //!
-//! - [`verify_steps`]: the spike's part of `cargo xtask verify` after the server's steps (format, Clippy, tests, documentation, cargo deny with the server's `deny.toml`). The supply-chain checks at the very start of `verify` (exact pins, and the age and checksum of every package version a change adds to its `Cargo.lock`) cover the spike's workspace ([`workspace`]) too: they find it by its `Cargo.lock`.
+//! - [`verify_steps`]: the spike's part of `cargo xtask verify` after the server's steps (format, Clippy, tests, documentation, and cargo deny with the spike's own `spikes/mls/deny.toml`, which is the server's `deny.toml` plus the one advisory exception that the owner accepted for the spike only; a test below keeps the two files so). The supply-chain checks at the very start of `verify` (exact pins, and the age and checksum of every package version a change adds to its `Cargo.lock`) cover the spike's workspace ([`workspace`]) too: they find it by its `Cargo.lock`.
 //! - `mls-spike-wasm [node | chromium]`: the spike's tests in WebAssembly, in Node.js and in headless Chromium.
 //! - `mls-spike-bench <native | node | chromium>`: the measurements of the report.
 //! - `mls-spike-wasm-size`: the size of the WebAssembly a web client would download.
@@ -97,7 +97,8 @@ pub fn verify_steps(root: &Path) -> Result {
         )
         .env("RUSTDOCFLAGS", "-D warnings"),
     )?;
-    let config = root.join("deny.toml");
+    // The spike's own policy: the server's, plus the one advisory exception that only the spike needs. The server's audit (`cargo xtask verify`) reads the root `deny.toml`, which has none.
+    let config = workspace(root).join("deny.toml");
     for target in DENY_TARGETS {
         step(
             &format!("MLS spike: dependency policy (cargo deny) for {target}"),
@@ -353,4 +354,73 @@ pub fn wasm_size(root: &Path) -> Result {
         eprintln!("{line}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// The advisory that the owner accepted for the MLS spike only, on 2026-10-27 (bayan-server#8): RUSTSEC-2026-0387, a timing leak in crypto-bigint 0.5.5, which only the spike reaches.
+    const SPIKE_ADVISORY: &str = "RUSTSEC-2026-0387";
+
+    /// Splits the text of `spikes/mls/deny.toml` into the text without its advisory exception and the exception itself: the `ignore = [` … `]` list of `[advisories]`, with the comment lines directly above it.
+    fn split_exception(spike: &str) -> (String, String) {
+        let lines: Vec<&str> = spike.split_inclusive('\n').collect();
+        let start = lines
+            .iter()
+            .position(|line| *line == "ignore = [\n")
+            .expect("spikes/mls/deny.toml has no line `ignore = [`; update this test");
+        let end = start
+            + lines[start..]
+                .iter()
+                .position(|line| *line == "]\n")
+                .expect("the `ignore` list of spikes/mls/deny.toml does not end with a line `]`; update this test");
+        let mut first = start;
+        while first > 0 && lines[first - 1].starts_with('#') {
+            first -= 1;
+        }
+        (
+            [&lines[..first], &lines[end + 1..]].concat().concat(),
+            lines[first..=end].concat(),
+        )
+    }
+
+    /// The spike's audit reads `spikes/mls/deny.toml` and the server's the root `deny.toml`. The two must hold the same policy, word for word, apart from the one advisory exception that the owner accepted for the spike only, so that every other rule of the server's policy holds for the spike too, and the exception never covers the server.
+    #[test]
+    fn the_spike_policy_is_the_servers_plus_one_advisory_exception() {
+        let server = include_str!("../../deny.toml").replace("\r\n", "\n");
+        let spike = include_str!("../../spikes/mls/deny.toml").replace("\r\n", "\n");
+        let (rest, exception) = split_exception(&spike);
+        assert_eq!(
+            rest, server,
+            "spikes/mls/deny.toml must be the root deny.toml plus the spike's advisory exception, and differ from it in nothing else: make the same change in both files"
+        );
+        let entries: Vec<&str> = exception
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with('{'))
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "the spike's deny.toml must ignore exactly one advisory, {SPIKE_ADVISORY}: {entries:?}"
+        );
+        assert!(
+            entries[0].starts_with(&format!("{{ id = \"{SPIKE_ADVISORY}\", reason = \"")),
+            "the spike's only advisory exception must be {SPIKE_ADVISORY}: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn notices_a_change_to_the_spike_policy_outside_its_exception() {
+        let server = "[advisories]\nunsound = \"all\"\n\n[licenses]\n";
+        let spike = "[advisories]\nunsound = \"all\"\n# Why.\n# More.\nignore = [\n  { id = \"X\", reason = \"y\" },\n]\n\n[licenses]\n";
+        let (rest, exception) = split_exception(spike);
+        assert_eq!(rest, server);
+        assert_eq!(
+            exception,
+            "# Why.\n# More.\nignore = [\n  { id = \"X\", reason = \"y\" },\n]\n"
+        );
+        // A rule changed anywhere else stays in the rest, so the comparison with the server's file fails.
+        let (rest, _) = split_exception(&spike.replace("\"all\"", "\"workspace\""));
+        assert_ne!(rest, server);
+    }
 }
