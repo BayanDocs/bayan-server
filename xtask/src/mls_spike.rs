@@ -365,18 +365,10 @@ mod tests {
     const SERVER_POLICY: &str = include_str!("../../deny.toml");
     const SPIKE_POLICY: &str = include_str!("../../spikes/mls/deny.toml");
 
-    /// Checks that `spike` is `server` byte for byte, except for exactly one added line inside the `ignore` list of `[advisories]` (after its line `ignore = [` and before the line `]` that closes it), and that this line is exactly `  { id = "RUSTSEC-2026-0387", reason = "…" },` with a reason that contains no `"` and no `\`, so that the line holds that one exception and nothing else: no second exception, as a table or a bare string, and no other key. Also checks that `server` names the advisory nowhere outside comments, so that the server's own audit never ignores it.
+    /// Checks that `spike` is `server` byte for byte, except for exactly one added line inside the `ignore` list of `[advisories]` (after its line `ignore = [` and before the line `]` that closes it), and that this line is exactly `  { id = "RUSTSEC-2026-0387", reason = "…" },` with a reason that contains no `"` and no `\`, so that the line holds that one exception and nothing else: no second exception, as a table or a bare string, and no other key. Also checks that the `ignore` list of `server` is empty, its line `ignore = [` directly followed by the line `]`, so that the server's own audit has no advisory exception, whatever an entry there would hold and however it would write an ID (a TOML escape such as `\u0030` writes the same ID with other characters). The server keeps no advisory exception of its own: one that a future security alert needs changes this check in a reviewed pull request, together with the owner's acceptance. The check does not judge the policy that both files share: a setting in both, such as a crate excluded from the graph, changes what both audits see, and only review catches it.
     fn check_spike_policy(server: &str, spike: &str) -> Result<(), String> {
         let server_lines: Vec<&str> = server.split_inclusive('\n').collect();
         let spike_lines: Vec<&str> = spike.split_inclusive('\n').collect();
-        if server_lines
-            .iter()
-            .any(|line| !line.trim_start().starts_with('#') && line.contains(SPIKE_ADVISORY))
-        {
-            return Err(format!(
-                "the root deny.toml names {SPIKE_ADVISORY} outside a comment"
-            ));
-        }
         if spike_lines.len() != server_lines.len() + 1 {
             return Err(format!(
                 "spikes/mls/deny.toml has {} lines and the root deny.toml {}; it must have exactly one line more",
@@ -421,7 +413,14 @@ mod tests {
                 .iter()
                 .position(|line| line_is(line, "]"))
                 .ok_or("the root deny.toml's `ignore` list has no closing line `]`")?;
-        if added <= open || added > close {
+        // The server keeps no advisory exception of its own: its list is empty, whatever an entry would hold and however it would write an ID.
+        if close != open + 1 {
+            return Err(
+                "the root deny.toml's `ignore` list in [advisories] is not empty: the server keeps no advisory exception of its own, so its line `ignore = [` must be followed directly by the line `]`"
+                    .to_owned(),
+            );
+        }
+        if added != close {
             return Err(format!(
                 "the line that spikes/mls/deny.toml adds (line {}) is not inside the `ignore` list of [advisories]",
                 added + 1
@@ -537,19 +536,48 @@ mod tests {
     }
 
     #[test]
-    fn refuses_the_exception_outside_the_ignore_list_or_in_the_servers_policy() {
+    fn refuses_the_exception_outside_the_ignore_list() {
         let line = exception_line();
         // The exception moved above the list: the added line is outside it.
         let moved = edited(SPIKE_POLICY, line, "");
         let moved = edited(&moved, "ignore = [\n", &format!("{line}ignore = [\n"));
         assert!(check_spike_policy(SERVER_POLICY, &moved).is_err());
-        // The exception also in the server's own list.
-        let server = edited(
-            SERVER_POLICY,
-            "ignore = [\n",
-            &format!("ignore = [\n{line}"),
-        );
-        assert!(check_spike_policy(&server, SPIKE_POLICY).is_err());
+    }
+
+    /// An entry in the server's own list, added to both files so that the spike's file is still the root's plus its one line: each is refused, and for that reason, however the entry writes its ID.
+    #[test]
+    fn refuses_any_entry_in_the_servers_own_list() {
+        let entries = [
+            // The spike's advisory with a TOML Unicode escape for the first 0 of 0387, which TOML, and so cargo-deny, reads as the same ID.
+            concat!(
+                r#"  { id = "RUSTSEC-2026-\u0030387", reason = "escaped" },"#,
+                "\n"
+            ),
+            // Another advisory, as a bare string and as a table.
+            "  \"RUSTSEC-2026-9999\",\n",
+            "  { id = \"RUSTSEC-2026-9999\", reason = \"another\" },\n",
+            // The spike's own exception, in the server's list too.
+            exception_line(),
+        ];
+        for entry in entries {
+            let server = edited(
+                SERVER_POLICY,
+                "ignore = [\n",
+                &format!("ignore = [\n{entry}"),
+            );
+            let spike = edited(
+                SPIKE_POLICY,
+                "ignore = [\n",
+                &format!("ignore = [\n{entry}"),
+            );
+            let Err(error) = check_spike_policy(&server, &spike) else {
+                panic!("an entry {entry:?} in both lists passed the check");
+            };
+            assert!(
+                error.contains("is not empty"),
+                "an entry {entry:?} in both lists was refused for another reason: {error}"
+            );
+        }
     }
 
     #[test]
