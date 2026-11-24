@@ -1,5 +1,5 @@
 # Continuous integration for bayan-server (SRV-001): the supply-chain checks first (X-003), then the verification gate, the PostgreSQL integration tests (with the comparison of both database backends' migrated schemas), and the container build, smoke test and vulnerability scan, on every pull request, in the merge queue, on pushes to main and nightly; and for the MLS spike (SRV-002, spikes/mls) its tests in WebAssembly.
-# Conventions (ADR-0017, X-002): every action pinned to a full commit SHA with its version in a comment, no permissions beyond reading the repository, timeouts on every job, no credentials left in the checkout, first-party actions only.
+# Conventions (ADR-0017, X-002): every action pinned to a full commit SHA with its version in a comment, no permissions beyond reading the repository, timeouts on every job, no credentials left in the checkout, first-party actions only, and rustup never updates itself (turned off before each toolchain install, as in bayan-core and bayan-web, and as ADR-0017's amendment of 2026-10-04 asks).
 name: CI
 
 on:
@@ -40,7 +40,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install
       - name: Every dependency is pinned exactly (cargo xtask check-exact-pins)
         run: cargo xtask check-exact-pins
       - name: Cargo builds exactly what each Cargo.lock lists, and every new package version is at least 24 hours old, with the checksum crates.io published (cargo xtask check-lockfile-age)
@@ -59,7 +61,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install
       - name: Install pinned tools (scripts/dev-setup.sh)
         run: scripts/dev-setup.sh cargo-deny
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -104,7 +108,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -151,7 +157,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned Rust toolchain and its WebAssembly target (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install
       - name: Install the pinned WebAssembly test tools (scripts/dev-setup.sh)
         run: scripts/dev-setup.sh wasm-bindgen node chromedriver chrome-headless-shell
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

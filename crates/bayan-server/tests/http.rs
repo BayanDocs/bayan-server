@@ -13,7 +13,9 @@ use common::{Server, TempDir, config};
 
 /// bayan-web's security headers, copied by hand from bayan-web at commit 01c59788fa755eea8665332d88b18174a90e1a22 (the head of its `main` when this copy was taken, on 2026-10-28): `productionHeaders` in `config/security-headers.ts`, whose policy `serializeCsp` builds from `cspDirectives`, and which `deploy/nginx/security-headers.conf` repeats line by line (a unit test in bayan-web keeps those two equal).
 ///
-/// The server must send exactly these, header by header (ADR-0014 and its amendment of 2026-10-12). It never reads bayan-web's files, so this copy is how drift on either side shows up in review: when bayan-web changes its headers, change `src/http/headers.rs`, this copy and the commit named here in one pull request.
+/// The server must send exactly these, header by header (ADR-0014 and its amendment of 2026-10-12). It never reads bayan-web's files: a change to `src/http/headers.rs` alone, or to this copy alone, fails the tests here; a change to both passes and shows only as a difference in review; nothing checks this copy against the bayan-web commit it names.
+///
+/// Nothing compares this copy with bayan-web's current files either, so a change to bayan-web's headers passes the checks of both repositories while the server keeps sending this set. Every such change therefore depends on a paired pull request here that changes `src/http/headers.rs`, this copy and the commit named here together, until the web app's build becomes the single source of the headers (WEB-103 with SRV-105).
 const BAYAN_WEB_HEADERS: [(&str, &str); 8] = [
     (
         "Content-Security-Policy",

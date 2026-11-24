@@ -158,7 +158,9 @@ jobs:
           persist-credentials: false
 
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install
 
       - name: Every dependency is pinned exactly (cargo xtask check-exact-pins)
         run: cargo xtask check-exact-pins
