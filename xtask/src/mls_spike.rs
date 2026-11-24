@@ -365,10 +365,19 @@ mod tests {
     const SERVER_POLICY: &str = include_str!("../../deny.toml");
     const SPIKE_POLICY: &str = include_str!("../../spikes/mls/deny.toml");
 
-    /// Checks that `spike` is `server` byte for byte, except for exactly one added line inside the `ignore` list of `[advisories]` (after its line `ignore = [` and before the line `]` that closes it), and that this line is exactly `  { id = "RUSTSEC-2026-0387", reason = "…" },` with a reason that contains no `"` and no `\`, so that the line holds that one exception and nothing else: no second exception, as a table or a bare string, and no other key. Also checks that the `ignore` list of `server` is empty, its line `ignore = [` directly followed by the line `]`, so that the server's own audit has no advisory exception, whatever an entry there would hold and however it would write an ID (a TOML escape such as `\u0030` writes the same ID with other characters). The server keeps no advisory exception of its own: one that a future security alert needs changes this check in a reviewed pull request, together with the owner's acceptance. The check does not judge the policy that both files share: a setting in both, such as a crate excluded from the graph, changes what both audits see, and only review catches it.
+    /// Checks that `spike` is `server` byte for byte, except for exactly one added line inside the `ignore` list of `[advisories]` (after its line `ignore = [` and before the line `]` that closes it), and that this line is exactly `  { id = "RUSTSEC-2026-0387", reason = "…" },` with a reason that contains no `"` and no `\`, so that the line holds that one exception and nothing else: no second exception, as a table or a bare string, and no other key. Also checks that the `ignore` list of `server` is empty, its line `ignore = [` directly followed by the line `]`, so that the server's own audit has no advisory exception, whatever an entry there would hold and however it would write an ID (a TOML escape such as `\u0030` writes the same ID with other characters). The server keeps no advisory exception of its own: one that a future security alert needs changes this check in a reviewed pull request, together with the owner's acceptance. It reads both files line by line, so it also refuses `'''` and `"""`, which open and close multi-line strings, on every line of `server` that is not a comment: a multi-line string could hide a fake `ignore = [` and `]` while a real list follows. Its job is narrow: keep the spike's one exception out of the server's audit, and keep the two files in step. It does not judge the policy that both files share: a setting in both, such as a crate excluded from the graph, changes what both audits see, and the security review that CODEOWNERS requires for every change to either file is where such a weakening is caught.
     fn check_spike_policy(server: &str, spike: &str) -> Result<(), String> {
         let server_lines: Vec<&str> = server.split_inclusive('\n').collect();
         let spike_lines: Vec<&str> = spike.split_inclusive('\n').collect();
+        // This check reads the files line by line, which a multi-line string could deceive, for example by hiding a fake `ignore = [` and `]` while a real list follows: it refuses their delimiters outside comments. The spike's file must equal the root's but for its one line, whose strict form below keeps its reason inside one basic string, so it cannot open a multi-line string either.
+        if let Some(index) = server_lines.iter().position(|line| {
+            !line.trim_start().starts_with('#') && (line.contains("'''") || line.contains("\"\"\""))
+        }) {
+            return Err(format!(
+                "line {} of the root deny.toml holds ''' or \"\"\", which open and close multi-line strings; this check reads the file line by line, so it refuses them outside comments",
+                index + 1
+            ));
+        }
         if spike_lines.len() != server_lines.len() + 1 {
             return Err(format!(
                 "spikes/mls/deny.toml has {} lines and the root deny.toml {}; it must have exactly one line more",
@@ -578,6 +587,30 @@ mod tests {
                 "an entry {entry:?} in both lists was refused for another reason: {error}"
             );
         }
+    }
+
+    /// The third review's construct, in both files so that the spike's file is still the root's plus its one line: under `[advisories]`, a `db-path` written as a multi-line literal string whose text is a fake empty list, followed by a real one-line list that ignores the spike's advisory. cargo-deny 0.21.0 accepts such a file and honours the real list; the check refuses it, and for that reason.
+    #[test]
+    fn refuses_a_multi_line_string_that_hides_a_fake_list() {
+        let line = exception_line();
+        let real = "ignore = [\"RUSTSEC-2026-0387\"]\n";
+        let server = edited(
+            SERVER_POLICY,
+            "ignore = [\n]\n",
+            &format!("db-path = '''\nignore = [\n]\n'''\n{real}"),
+        );
+        let spike = edited(
+            SPIKE_POLICY,
+            &format!("ignore = [\n{line}]\n"),
+            &format!("db-path = '''\nignore = [\n{line}]\n'''\n{real}"),
+        );
+        let Err(error) = check_spike_policy(&server, &spike) else {
+            panic!("a multi-line string that hides a fake list passed the check");
+        };
+        assert!(
+            error.contains("multi-line strings"),
+            "the multi-line string was refused for another reason: {error}"
+        );
     }
 
     #[test]
