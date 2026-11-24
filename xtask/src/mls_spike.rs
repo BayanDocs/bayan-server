@@ -1,6 +1,6 @@
 //! Commands for the MLS spike of work package SRV-002 (`spikes/mls`, a Cargo workspace of its own; see its REPORT.md).
 //!
-//! - [`verify_steps`]: the spike's part of `cargo xtask verify` after the server's steps (format, Clippy, tests, documentation, and cargo deny with the spike's own `spikes/mls/deny.toml`, which is the server's `deny.toml` plus the one advisory exception that the owner accepted for the spike only; a test below keeps the two files so). The supply-chain checks at the very start of `verify` (exact pins, and the age and checksum of every package version a change adds to its `Cargo.lock`) cover the spike's workspace ([`workspace`]) too: they find it by its `Cargo.lock`.
+//! - [`verify_steps`]: the spike's part of `cargo xtask verify` after the server's steps (format, Clippy, tests, documentation, and cargo deny with the spike's own `spikes/mls/deny.toml`, which is the server's `deny.toml`, byte for byte, plus one line, the advisory exception that the owner accepted for the spike only; a test below checks exactly that). The supply-chain checks at the very start of `verify` (exact pins, and the age and checksum of every package version a change adds to its `Cargo.lock`) cover the spike's workspace ([`workspace`]) too: they find it by its `Cargo.lock`.
 //! - `mls-spike-wasm [node | chromium]`: the spike's tests in WebAssembly, in Node.js and in headless Chromium.
 //! - `mls-spike-bench <native | node | chromium>`: the measurements of the report.
 //! - `mls-spike-wasm-size`: the size of the WebAssembly a web client would download.
@@ -97,7 +97,7 @@ pub fn verify_steps(root: &Path) -> Result {
         )
         .env("RUSTDOCFLAGS", "-D warnings"),
     )?;
-    // The spike's own policy: the server's, plus the one advisory exception that only the spike needs. The server's audit (`cargo xtask verify`) reads the root `deny.toml`, which has none.
+    // The spike's own policy: the server's, plus one line, the advisory exception that only the spike needs. The server's audit (`cargo xtask verify`) reads the root `deny.toml`, whose list of exceptions is empty.
     let config = workspace(root).join("deny.toml");
     for target in DENY_TARGETS {
         step(
@@ -361,66 +361,208 @@ mod tests {
     /// The advisory that the owner accepted for the MLS spike only, on 2026-10-27 (bayan-server#8): RUSTSEC-2026-0387, a timing leak in crypto-bigint 0.5.5, which only the spike reaches.
     const SPIKE_ADVISORY: &str = "RUSTSEC-2026-0387";
 
-    /// Splits the text of `spikes/mls/deny.toml` into the text without its advisory exception and the exception itself: the `ignore = [` … `]` list of `[advisories]`, with the comment lines directly above it.
-    fn split_exception(spike: &str) -> (String, String) {
-        let lines: Vec<&str> = spike.split_inclusive('\n').collect();
-        let start = lines
+    /// The server's policy (the root `deny.toml`) and the spike's (`spikes/mls/deny.toml`), as checked out.
+    const SERVER_POLICY: &str = include_str!("../../deny.toml");
+    const SPIKE_POLICY: &str = include_str!("../../spikes/mls/deny.toml");
+
+    /// Checks that `spike` is `server` byte for byte, except for exactly one added line inside the `ignore` list of `[advisories]` (after its line `ignore = [` and before the line `]` that closes it), and that this line is exactly `  { id = "RUSTSEC-2026-0387", reason = "…" },` with a reason that contains no `"` and no `\`, so that the line holds that one exception and nothing else: no second exception, as a table or a bare string, and no other key. Also checks that `server` names the advisory nowhere outside comments, so that the server's own audit never ignores it.
+    fn check_spike_policy(server: &str, spike: &str) -> Result<(), String> {
+        let server_lines: Vec<&str> = server.split_inclusive('\n').collect();
+        let spike_lines: Vec<&str> = spike.split_inclusive('\n').collect();
+        if server_lines
             .iter()
-            .position(|line| *line == "ignore = [\n")
-            .expect("spikes/mls/deny.toml has no line `ignore = [`; update this test");
-        let end = start
-            + lines[start..]
-                .iter()
-                .position(|line| *line == "]\n")
-                .expect("the `ignore` list of spikes/mls/deny.toml does not end with a line `]`; update this test");
-        let mut first = start;
-        while first > 0 && lines[first - 1].starts_with('#') {
-            first -= 1;
+            .any(|line| !line.trim_start().starts_with('#') && line.contains(SPIKE_ADVISORY))
+        {
+            return Err(format!(
+                "the root deny.toml names {SPIKE_ADVISORY} outside a comment"
+            ));
         }
-        (
-            [&lines[..first], &lines[end + 1..]].concat().concat(),
-            lines[first..=end].concat(),
-        )
+        if spike_lines.len() != server_lines.len() + 1 {
+            return Err(format!(
+                "spikes/mls/deny.toml has {} lines and the root deny.toml {}; it must have exactly one line more",
+                spike_lines.len(),
+                server_lines.len()
+            ));
+        }
+        // The first line that differs is the added one; every line after it must equal the root file's line before it.
+        let added = server_lines
+            .iter()
+            .zip(&spike_lines)
+            .position(|(server_line, spike_line)| server_line != spike_line)
+            .unwrap_or(server_lines.len());
+        if spike_lines[added + 1..] != server_lines[added..] {
+            return Err(
+                "spikes/mls/deny.toml differs from the root deny.toml in more than one added line"
+                    .to_owned(),
+            );
+        }
+        // The added line must lie inside the `ignore` list of `[advisories]`, as the root file lays it out.
+        let line_is = |line: &str, text: &str| line.trim_end_matches(['\n', '\r']) == text;
+        let advisories = server_lines
+            .iter()
+            .position(|line| line_is(line, "[advisories]"))
+            .ok_or("the root deny.toml has no line `[advisories]`")?;
+        let open = advisories
+            + server_lines[advisories..]
+                .iter()
+                .position(|line| line_is(line, "ignore = ["))
+                .ok_or("the root deny.toml has no line `ignore = [` after `[advisories]`")?;
+        if server_lines[advisories + 1..open]
+            .iter()
+            .any(|line| line.trim_start().starts_with('['))
+        {
+            return Err(
+                "the root deny.toml's line `ignore = [` is not in the [advisories] table"
+                    .to_owned(),
+            );
+        }
+        let close = open
+            + server_lines[open..]
+                .iter()
+                .position(|line| line_is(line, "]"))
+                .ok_or("the root deny.toml's `ignore` list has no closing line `]`")?;
+        if added <= open || added > close {
+            return Err(format!(
+                "the line that spikes/mls/deny.toml adds (line {}) is not inside the `ignore` list of [advisories]",
+                added + 1
+            ));
+        }
+        // The added line holds exactly the one exception.
+        let line = spike_lines[added].trim_end_matches(['\n', '\r']);
+        let reason = line
+            .strip_prefix(&format!("  {{ id = \"{SPIKE_ADVISORY}\", reason = \""))
+            .and_then(|rest| rest.strip_suffix("\" },"))
+            .ok_or_else(|| {
+                format!(
+                    "the line that spikes/mls/deny.toml adds must be exactly `  {{ id = \"{SPIKE_ADVISORY}\", reason = \"…\" }},`, not `{line}`"
+                )
+            })?;
+        if reason.is_empty() || reason.contains(['"', '\\']) {
+            return Err(format!(
+                "the reason of {SPIKE_ADVISORY} must be a non-empty string without `\"` or `\\`, not `{reason}`"
+            ));
+        }
+        Ok(())
     }
 
-    /// The spike's audit reads `spikes/mls/deny.toml` and the server's the root `deny.toml`. The two must hold the same policy, word for word, apart from the one advisory exception that the owner accepted for the spike only, so that every other rule of the server's policy holds for the spike too, and the exception never covers the server.
+    /// The spike's audit reads `spikes/mls/deny.toml` and the server's the root `deny.toml`: the two must stay one policy, apart from the one exception that the owner accepted for the spike only, so that every other rule of the server's policy holds for the spike too, the exception never covers the server, and nothing else can join it unnoticed.
     #[test]
     fn the_spike_policy_is_the_servers_plus_one_advisory_exception() {
-        let server = include_str!("../../deny.toml").replace("\r\n", "\n");
-        let spike = include_str!("../../spikes/mls/deny.toml").replace("\r\n", "\n");
-        let (rest, exception) = split_exception(&spike);
-        assert_eq!(
-            rest, server,
-            "spikes/mls/deny.toml must be the root deny.toml plus the spike's advisory exception, and differ from it in nothing else: make the same change in both files"
-        );
-        let entries: Vec<&str> = exception
-            .lines()
-            .map(str::trim)
-            .filter(|line| line.starts_with('{'))
-            .collect();
-        assert_eq!(
-            entries.len(),
-            1,
-            "the spike's deny.toml must ignore exactly one advisory, {SPIKE_ADVISORY}: {entries:?}"
-        );
+        assert_eq!(check_spike_policy(SERVER_POLICY, SPIKE_POLICY), Ok(()));
+    }
+
+    /// `text` with the first occurrence of `from` replaced by `to`; fails if `from` does not occur, so that no negative case passes because its edit missed.
+    fn edited(text: &str, from: &str, to: &str) -> String {
         assert!(
-            entries[0].starts_with(&format!("{{ id = \"{SPIKE_ADVISORY}\", reason = \"")),
-            "the spike's only advisory exception must be {SPIKE_ADVISORY}: {entries:?}"
+            text.contains(from),
+            "the edit's text {from:?} is not in the file"
+        );
+        text.replacen(from, to, 1)
+    }
+
+    /// The line of the exception in the spike's policy, with its line break (the comment above the list names the advisory too).
+    fn exception_line() -> &'static str {
+        SPIKE_POLICY
+            .split_inclusive('\n')
+            .find(|line| !line.trim_start().starts_with('#') && line.contains(SPIKE_ADVISORY))
+            .expect("spikes/mls/deny.toml has no line for the spike's advisory")
+    }
+
+    /// Asserts that the spike's policy, edited as given, fails the check.
+    fn refused(from: &str, to: &str) {
+        let spike = edited(SPIKE_POLICY, from, to);
+        assert!(
+            check_spike_policy(SERVER_POLICY, &spike).is_err(),
+            "an edit of spikes/mls/deny.toml from {from:?} to {to:?} passed the check"
         );
     }
 
     #[test]
-    fn notices_a_change_to_the_spike_policy_outside_its_exception() {
-        let server = "[advisories]\nunsound = \"all\"\n\n[licenses]\n";
-        let spike = "[advisories]\nunsound = \"all\"\n# Why.\n# More.\nignore = [\n  { id = \"X\", reason = \"y\" },\n]\n\n[licenses]\n";
-        let (rest, exception) = split_exception(spike);
-        assert_eq!(rest, server);
-        assert_eq!(
-            exception,
-            "# Why.\n# More.\nignore = [\n  { id = \"X\", reason = \"y\" },\n]\n"
+    fn refuses_a_second_exception_as_a_bare_string() {
+        let line = exception_line();
+        // On a line of its own, and on the exception's own line; cargo-deny applies both.
+        refused(line, &format!("{line}  \"RUSTSEC-2026-9999\",\n"));
+        refused(line, &line.replace(" },\n", " }, \"RUSTSEC-2026-9999\",\n"));
+    }
+
+    #[test]
+    fn refuses_a_second_table_on_the_exceptions_line() {
+        let line = exception_line();
+        refused(
+            line,
+            &line.replace(
+                " },\n",
+                " }, { id = \"RUSTSEC-2026-9999\", reason = \"another\" },\n",
+            ),
         );
-        // A rule changed anywhere else stays in the rest, so the comparison with the server's file fails.
-        let (rest, _) = split_exception(&spike.replace("\"all\"", "\"workspace\""));
-        assert_ne!(rest, server);
+    }
+
+    #[test]
+    fn refuses_an_added_key_in_advisories_or_anywhere_else() {
+        refused(
+            "unsound = \"all\"\n",
+            "unsound = \"all\"\ndb-urls = [\"https://example.invalid/advisory-db\"]\n",
+        );
+        refused(
+            "[licenses]\n",
+            "[licenses]\nexceptions = [{ crate = \"x\", allow = [\"GPL-3.0\"] }]\n",
+        );
+        refused("[bans]\n", "[bans]\nskip = [\"cc\"]\n");
+    }
+
+    #[test]
+    fn refuses_the_list_closed_differently() {
+        let line = exception_line();
+        let closed = format!("{line}]\n");
+        // A trailing space after `]`, then a key before a later `]`, as the security review found.
+        refused(
+            &closed,
+            &format!("{line}] \ndb-urls = [\"https://example.invalid/advisory-db\"\n]\n"),
+        );
+        // The list closed on the exception's own line.
+        refused(&closed, &line.replace(" },\n", " } ]\n"));
+    }
+
+    #[test]
+    fn refuses_a_reason_that_could_end_its_string_or_escape() {
+        let line = exception_line();
+        refused(
+            line,
+            &line.replace(
+                "reason = \"",
+                "reason = \"a\", db-urls = [\"x\"], note = \"",
+            ),
+        );
+        refused(line, &line.replace("reason = \"", "reason = \"a \\u0022 "));
+    }
+
+    #[test]
+    fn refuses_the_exception_outside_the_ignore_list_or_in_the_servers_policy() {
+        let line = exception_line();
+        // The exception moved above the list: the added line is outside it.
+        let moved = edited(SPIKE_POLICY, line, "");
+        let moved = edited(&moved, "ignore = [\n", &format!("{line}ignore = [\n"));
+        assert!(check_spike_policy(SERVER_POLICY, &moved).is_err());
+        // The exception also in the server's own list.
+        let server = edited(
+            SERVER_POLICY,
+            "ignore = [\n",
+            &format!("ignore = [\n{line}"),
+        );
+        assert!(check_spike_policy(&server, SPIKE_POLICY).is_err());
+    }
+
+    #[test]
+    fn refuses_a_rule_changed_in_one_file_only() {
+        refused(
+            "multiple-versions = \"warn\"\n",
+            "multiple-versions = \"allow\"\n",
+        );
+        let server = edited(
+            SERVER_POLICY,
+            "multiple-versions = \"warn\"\n",
+            "multiple-versions = \"deny\"\n",
+        );
+        assert!(check_spike_policy(&server, SPIKE_POLICY).is_err());
     }
 }
