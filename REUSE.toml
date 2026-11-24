@@ -16,6 +16,12 @@ path = [".github/**", ".editorconfig", ".gitattributes"]
 SPDX-FileCopyrightText = "2026 BayanDocs contributors"
 SPDX-License-Identifier = "MIT-0"
 
+# The supply-chain checker (cargo xtask check-exact-pins and check-lockfile-age, work package X-003), with the recorded crates.io answers its tests replay: the same code in bayan-core and bayan-server, changed in both together. MIT-0, so that a fix can be copied between the two repositories as it is; the rest of xtask keeps the default license (ADR-0003, amendment of 2026-11-24).
+[[annotations]]
+path = "xtask/src/supply_chain/**"
+SPDX-FileCopyrightText = "2026 BayanDocs contributors"
+SPDX-License-Identifier = "MIT-0"
+
 # Integration kits (machine-readable API descriptions, SDKs, examples): Apache-2.0, so companies can integrate without touching AGPL code.
 # They must never contain, copy from or depend on AGPL server code or GPL core code.
 [[annotations]]
